@@ -6,6 +6,7 @@
 - Route all allocations in src/rbtree.c through two four-line wrappers for rb_malloc and rb_free, then forward to malloc and free.
 ## Hard constraints
 - NEVER modify include/rbtree.h. It is the graded contract.
+- Use include/rbtree.h as a strict reference for allocations and ownership such; every function must follow the rules outlined there.
 - Check every allocation. malloc can return NULL; a NULL return must
 leave the tree unchanged and return the documented error code.
 - NEVER weaken, skip, or delete a test to make the suite pass. If a test
