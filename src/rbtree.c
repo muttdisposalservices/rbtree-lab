@@ -3,12 +3,12 @@
 #include <string.h>
 
 /* Sole allocation path (CLAUDE.md routing rule). */
-[[maybe_unused]] static void *rb_malloc(size_t size)
+static void *rb_malloc(size_t size)
 {
     return malloc(size);
 }
 
-[[maybe_unused]] static void rb_free(void *ptr)
+static void rb_free(void *ptr)
 {
     free(ptr);
 }
@@ -31,9 +31,27 @@ struct rbtree {
 
 rbtree_t *rb_create(rb_value_free_fn value_free)
 {
-    (void)value_free;
-    /* TODO: alloc struct, alloc nil (BLACK, key/value NULL), goto-cleanup
-     * the struct if nil's alloc fails, else root = nil. */
+    rbtree_t *t = rb_malloc(sizeof *t);
+    if (!t)
+        return NULL;                 /* nothing allocated yet, nothing to free */
+
+    rbnode_t *nil = rb_malloc(sizeof *nil);
+    if (!nil)
+        goto cleanup_tree;           /* second alloc failed, unwind the first */
+
+    nil->color  = RB_BLACK;
+    nil->key    = NULL;
+    nil->value  = NULL;
+    nil->left = nil->right = nil->parent = nil;
+
+    t->nil        = nil;
+    t->root        = nil;
+    t->size        = 0;
+    t->value_free = value_free;
+    return t;
+
+cleanup_tree:
+    rb_free(t);
     return NULL;
 }
 

@@ -3,6 +3,7 @@
 - Build & unit tests: ‘make test‘
 - Sanitizers: ‘make asan‘ Valgrind: ‘make memcheck‘
 - A change is DONE only when all three pass. Always run them; show output.
+- As of 8/29, 'make asan' will not work due to missing libraries. If this happens, the change is not DONE, but show the output and feedback anyway.
 - Route all allocations in src/rbtree.c through two four-line wrappers for rb_malloc and rb_free, then forward to malloc and free.
 ## Hard constraints
 - NEVER modify include/rbtree.h. It is the graded contract.
@@ -11,6 +12,8 @@
 leave the tree unchanged and return the documented error code.
 - NEVER weaken, skip, or delete a test to make the suite pass. If a test
 looks wrong, stop and explain why instead.
+- 'rb_insert' must 'rb_malloc + memcpy' its own copy 'k'; it must never store 'key' itself or free it.
+
 ## Style
 - C23. -Wall -Wextra -Werror must stay clean. No VLAs.
 - Error handling: goto-cleanup pattern for multi-allocation functions.
