@@ -42,8 +42,10 @@ int rb_insert(rbtree_t *t, const char *key, void *value)
     (void)t;
     (void)key;
     (void)value;
-    /* TODO: strdup key, alloc node (goto-cleanup on either failure), BST
-     * insert against nil leaves, red-black fixup, size++. */
+    /* TODO: alloc node (goto-cleanup on either failure), BST insert against
+     * nil leaves, red-black fixup, size++.
+     * NOTE: copy the key via rb_malloc+memcpy, not strdup -- strdup calls
+     * malloc directly, bypassing the CLAUDE.md allocation-routing rule. */
     return -1;
 }
 
@@ -72,3 +74,7 @@ int rb_validate(const rbtree_t *t)
      * every root-to-nil path. */
     return -1;
 }
+
+/* TODO: rb_destroy is undeclared here but will likely be needed before
+ * `make memcheck` can stay green once rb_create/rb_insert do real
+ * allocation -- there's currently no way to free a tree's nodes/keys. */

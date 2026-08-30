@@ -16,6 +16,12 @@ $(FUZZBIN): $(SRC) tests/fuzz.c include/rbtree.h
 test: $(BIN) $(FUZZBIN)
 	./$(BIN) && ./$(FUZZBIN) 100000
 
+# TODO: make has no CFLAGS-sensitivity, so running e.g. `make asan` then
+# `make memcheck`/`make test` without an intervening `make clean` silently
+# reuses the ASan/UBSan-instrumented binary instead of rebuilding plain.
+# Deferred for now since no real tree logic exists yet to trigger it; fix
+# later with a separate build dir per config, or by adding clean as a
+# dependency of test/memcheck.
 asan: CFLAGS += -fsanitize=address,undefined -fno-omit-frame-pointer
 asan: clean test
 
