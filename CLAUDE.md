@@ -13,7 +13,6 @@ leave the tree unchanged and return the documented error code.
 - NEVER weaken, skip, or delete a test to make the suite pass. If a test
 looks wrong, stop and explain why instead.
 - 'rb_insert' must 'rb_malloc + memcpy' its own copy 'k'; it must never store 'key' itself or free it.
-
 ## Style
 - C23. -Wall -Wextra -Werror must stay clean. No VLAs.
 - Error handling: goto-cleanup pattern for multi-allocation functions.
