@@ -2,13 +2,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Sole allocation path (CLAUDE.md routing rule). */
-static void *rb_malloc(size_t size)
+/* Sole allocation path (CLAUDE.md routing rule). Weak so a test build (or a
+ * future assignment) can link in a strong override for a custom allocator. */
+__attribute__((weak)) void *rb_malloc(size_t size)
 {
     return malloc(size);
 }
 
-static void rb_free(void *ptr)
+__attribute__((weak)) void rb_free(void *ptr)
 {
     free(ptr);
 }
@@ -67,6 +68,11 @@ int rb_insert(rbtree_t *t, const char *key, void *value)
     return -1;
 }
 
+size_t rb_size(const rbtree_t *t)
+{
+    return t->size;
+}
+
 void *rb_find(const rbtree_t *t, const char *key)
 {
     (void)t;
@@ -93,6 +99,14 @@ int rb_validate(const rbtree_t *t)
     return -1;
 }
 
-/* TODO: rb_destroy is undeclared here but will likely be needed before
- * `make memcheck` can stay green once rb_create/rb_insert do real
- * allocation -- there's currently no way to free a tree's nodes/keys. */
+void rb_destroy(rbtree_t *t)
+{
+    if (!t)
+        return;
+    /* TODO: once rb_insert lands real nodes, traverse and free each node's
+     * key (and value, iff value_free is set) before freeing nil/t. Today
+     * rb_create's only reachable output is an empty tree, so there are no
+     * nodes/keys/values to walk yet. */
+    rb_free(t->nil);
+    rb_free(t);
+}

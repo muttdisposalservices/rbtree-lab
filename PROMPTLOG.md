@@ -35,3 +35,19 @@
     Checked case handling for value_free outside of rb_create.
 
     Implemented minimal-diff rb_create and removed '[[maybe unused]]' from 'rb_malloc' and 'rb_free' wrappers (previously used to help gcc compile without issues). 'make test' and 'make memcheck' pass.
+
+    Requested table-driven test cases for rb_create. Pushed for rb_malloc and rb_free to be used, and Claude recommended weak linkage instead of static for non-test builds, so for future-proofing this was approved. Added tests/fault_malloc.c to test faulty malloc calls. Added a minimal rb_destroy stub to allow tests to pass without compromising scope. Also requested these rb_create tests not overwrite main() in tests/test_rbtree.c and just add a helper test function. Also modified Makefile to include tests/fault_malloc.c.
+    Tests pass, including:
+        create_null_value_free
+        create_nonnull_value_free
+        create_fail_first_alloc
+        create_fail_second_alloc
+        create_independent_instances
+        create_destroy_null_safe
+
+8/30/26:
+    Asked to be quizzed from beginner-medium-hard on memory allocation and ownership multiple times. Pushed into implementing rb_insert tests. Ran adversarial review in a new context against for the following results:
+        Added a count-free function instead of noop_free to count the number of improperly-invoked frees.
+        Add rb_validate assertions. This causes make test to fail until implementation, but this is deliberate.
+        Add comments clarifying stale case-numbering and fail-at magic-number coupling.
+    

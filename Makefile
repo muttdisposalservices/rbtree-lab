@@ -1,7 +1,7 @@
 CC := gcc
 CFLAGS := -std=c2x -Wall -Wextra -Werror -g -O1 -Iinclude
 SRC := src/rbtree.c
-TSRC := tests/test_rbtree.c
+TSRC := tests/test_rbtree.c tests/fault_malloc.c
 BIN := build/test_rbtree
 FUZZBIN := build/fuzz
 
