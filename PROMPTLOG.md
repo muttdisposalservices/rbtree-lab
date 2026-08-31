@@ -141,3 +141,54 @@
         >> Same as earlier, showing rb_validate doesn't risk memory problems like the other functions. Moving to adversarial review.
     
     Pushed new context against src/rbtree.c and tests/test_rbtree.c. Covered second-allocation leak case in insert_case_t via expected-free-count logic. Updated rb_insert tests to prevent duplicate key insertion and failed value overwrites. Added test against segfault from duplicate key with value_free != and == NULL via insert_duplicate_key_null_value_free. Added insert_key_survives_caller_free to ensure pointer copy instead of storage. Revised rb_destroy tests to consider 2(node-count) + 2 frees (after implementation) instead of 2 (pre-implementation). This will prevent under-/over-freeing, as well as recursing into t->nil and trying to reference nil->key.
+
+    Asked for rb_insert walkthrough without fixup. Clarified ownership on old freeing old value at a duplicate key with value_free = NULL. Drafted BST-only rb_insert (no fixup) and tests checking against rb_validate. These are expected to fail because of the lack of insert. Added rb_destroy without tests, will do so prior to next adversarial review. Updated was_freed test to was_freed_since to circumvent glibc same-byte-size aliasing issues without weakening tests. 
+
+    Claude log for heavier testing alternative because I'm exhausted:
+        Logged, not implemented: a heavier alternative for later milestones. rb_delete will interleave far more frees/mallocs per test than this one case does, so generation-scoping every future vulnerable spot by hand won't scale. The more robust fix would be to stop tracking raw addresses at all -- tag each tracked test value with a unique id inside a small wrapper struct (e.g. {int id; char data[N];}), and have track_free capture the id before calling free() instead of recording the pointer. That's correct by construction (no address-reuse window to reason about) rather than correct by scoping, but it touches every existing call site that currently passes a raw malloc'd buffer as value (cases 4, 5, 12, 13 today), so it's deferred until rb_delete's tests actually need it.
+
+    make test output:
+        ok - validate_red_red_LL
+        ok - validate_red_red_LR
+        ok - validate_red_red_RL
+        ok - validate_red_red_RR
+        ok - validate_bst_order_immediate_left_too_big
+        ok - validate_bst_order_immediate_right_too_small
+        ok - validate_bst_order_deep_left_exceeds_root
+        ok - validate_bst_order_deep_right_below_root
+        ok - validate_black_height_left_heavy
+        ok - validate_black_height_right_heavy
+        ok - validate_root_must_be_black
+        ok - create_null_value_free
+        ok - create_nonnull_value_free
+        ok - create_fail_first_alloc
+        ok - create_fail_second_alloc
+        ok - create_independent_instances
+        ok - create_destroy_null_safe
+        ok - insert_bst_shape_multilevel
+        ok - insert_bst_ascending_chain_shape
+        ok - insert_bst_destroy_frees_real_nodes
+        ok - insert_into_empty_success
+        ok - insert_fails_first_alloc
+        ok - insert_fails_second_alloc
+        ok - insert_failure_value_not_consumed
+        test_rbtree: tests/test_rbtree.c:545: test_rb_insert: Assertion `rb_validate(t) == 0' failed.
+        >> Insert fixup hasn't been implemented yet, but BST insertion and alloc tests succeed, along with value nonconsumption. This will be reviewed soon.
+
+    make memcheck output:
+        My memcheck:
+        ==1978595== LEAK SUMMARY:
+        ==1978595==    definitely lost: 0 bytes in 0 blocks
+        ==1978595==    indirectly lost: 0 bytes in 0 blocks
+        ==1978595==      possibly lost: 0 bytes in 0 blocks
+        ==1978595==    still reachable: 1,300 bytes in 12 blocks
+        ==1978595==         suppressed: 0 bytes in 0 blocks
+
+        Claude memcheck:
+        LEAK SUMMARY:
+        ==1978299==    definitely lost: 0 bytes in 0 blocks
+        ==1978299==    indirectly lost: 0 bytes in 0 blocks
+        ==1978299==      possibly lost: 0 bytes in 0 blocks
+        ==1978299==    still reachable: 4,372 bytes in 12 blocks
+        ==1978299==         suppressed: 0 bytes in 0 blocks
+        >> Difference due to Claude's use of piped output in a different environment. Still-reachable bytes aused by the lack of rb_insert fixup causing an rb_validate assertion to fail before reaching rb_destroy, which would clear 11 blocks. 1 block is for malloc, so there're no leaks.

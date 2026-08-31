@@ -58,13 +58,55 @@ cleanup_tree:
 
 int rb_insert(rbtree_t *t, const char *key, void *value)
 {
-    (void)t;
-    (void)key;
-    (void)value;
-    /* TODO: alloc node (goto-cleanup on either failure), BST insert against
-     * nil leaves, red-black fixup, size++.
-     * NOTE: copy the key via rb_malloc+memcpy, not strdup -- strdup calls
-     * malloc directly, bypassing the CLAUDE.md allocation-routing rule. */
+    rbnode_t *cur = t->root;
+    rbnode_t *parent = t->nil;
+    int cmp = 0;
+
+    /* invariant: cur is the subtree still to search; parent trails one node
+     * behind as the eventual new node's parent (or the overwrite target)
+     * once cur reaches nil or an exact match. */
+    while (cur != t->nil) {
+        cmp = strcmp(key, cur->key);
+        if (cmp == 0) {
+            if (t->value_free)
+                t->value_free(cur->value);
+            cur->value = value;
+            return 0;
+        }
+        parent = cur;
+        cur = (cmp < 0) ? cur->left : cur->right;
+    }
+
+    rbnode_t *n = rb_malloc(sizeof *n);
+    if (!n)
+        return -1;                   /* nothing allocated yet, nothing to free */
+
+    size_t klen = strlen(key) + 1;
+    char *kcopy = rb_malloc(klen);
+    if (!kcopy)
+        goto cleanup_node;           /* second alloc failed, unwind the first */
+    memcpy(kcopy, key, klen);
+
+    n->key    = kcopy;
+    n->value  = value;
+    n->left   = n->right = t->nil;
+    n->parent = parent;
+    n->color  = RB_RED;
+    /* TODO: red-black fixup. A fresh non-root node inserted red can now
+     * have a red parent, which rb_validate will reject until fixup lands. */
+
+    if (parent == t->nil)
+        t->root = n;
+    else if (cmp < 0)
+        parent->left = n;
+    else
+        parent->right = n;
+
+    t->size++;
+    return 0;
+
+cleanup_node:
+    rb_free(n);
     return -1;
 }
 
@@ -75,9 +117,16 @@ size_t rb_size(const rbtree_t *t)
 
 void *rb_find(const rbtree_t *t, const char *key)
 {
-    (void)t;
-    (void)key;
-    /* TODO: strcmp walk from root until node == t->nil. */
+    rbnode_t *cur = t->root;
+
+    /* invariant: cur is the subtree still to search; strcmp narrows left or
+     * right each step until an exact match or the nil sentinel is reached. */
+    while (cur != t->nil) {
+        int cmp = strcmp(key, cur->key);
+        if (cmp == 0)
+            return cur->value;
+        cur = (cmp < 0) ? cur->left : cur->right;
+    }
     return NULL;
 }
 
@@ -134,14 +183,26 @@ int rb_validate(const rbtree_t *t)
     return rb_validate_node(t, t->root, NULL, NULL, &bh) ? 0 : -1;
 }
 
+/* Post-order: free a node's children before the node itself, so no pointer
+ * into freed memory is ever dereferenced. Stops at t->nil, the shared
+ * sentinel, which rb_destroy frees separately, once, after this returns. */
+static void rb_destroy_node(rbtree_t *t, rbnode_t *n)
+{
+    if (n == t->nil)
+        return;
+    rb_destroy_node(t, n->left);
+    rb_destroy_node(t, n->right);
+    if (t->value_free)
+        t->value_free(n->value);
+    rb_free(n->key);
+    rb_free(n);
+}
+
 void rb_destroy(rbtree_t *t)
 {
     if (!t)
         return;
-    /* TODO: once rb_insert lands real nodes, traverse and free each node's
-     * key (and value, iff value_free is set) before freeing nil/t. Today
-     * rb_create's only reachable output is an empty tree, so there are no
-     * nodes/keys/values to walk yet. */
+    rb_destroy_node(t, t->root);
     rb_free(t->nil);
     rb_free(t);
 }

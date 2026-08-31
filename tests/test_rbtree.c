@@ -73,6 +73,29 @@ static int free_occurrences(void *value)
     return n;
 }
 
+/* Scoped variants of was_freed/free_occurrences: only consider frees
+ * recorded at or after `since` (a freed_count high-water mark taken right
+ * before the value under test was allocated). Needed because glibc's
+ * tcache commonly hands a just-freed same-size chunk back to the very next
+ * malloc -- an unscoped scan would false-positive on a *stale* entry for a
+ * previous, unrelated allocation that happened to reuse the same address. */
+static int was_freed_since(void *value, int since)
+{
+    for (int i = since; i < freed_count; i++)
+        if (freed_values[i] == value)
+            return 1;
+    return 0;
+}
+
+static int free_occurrences_since(void *value, int since)
+{
+    int n = 0;
+    for (int i = since; i < freed_count; i++)
+        if (freed_values[i] == value)
+            n++;
+    return n;
+}
+
 #define MAX_COLLECT 16
 typedef struct {
     const char *keys[MAX_COLLECT];
@@ -491,6 +514,7 @@ static void test_rb_insert(void)
          * still returns 0 despite the arming. An implementation that always
          * allocates a fresh node on every insert (even for a duplicate key)
          * would either fail here or leak the discarded new node/key. */
+        int since = freed_count;   /* old_value's slot may get reused below */
         char *third_value = malloc(8);
         assert(third_value);
         strcpy(third_value, "third");
@@ -501,8 +525,8 @@ static void test_rb_insert(void)
         assert(rc == 0);
 
         assert(rb_size(t) == 1);
-        assert(free_occurrences(new_value) == 1); /* freed once, not twice */
-        assert(!was_freed(third_value));
+        assert(free_occurrences_since(new_value, since) == 1); /* freed once, not twice */
+        assert(!was_freed_since(third_value, since));
         assert(rb_find(t, "dup") == third_value);
 
         /* A couple more surviving entries, so destroy has to walk multiple
@@ -790,10 +814,144 @@ static void test_rb_insert(void)
     }
 }
 
+/* White-box in-order walk (rb_foreach isn't implemented yet at this stage of
+ * the assignment) used only by the BST-only checkpoint tests below to prove
+ * ordering without depending on color/black-height invariants. */
+static void bst_inorder_collect(const rbtree_t *t, rbnode_t *n, collect_ctx_t *c)
+{
+    if (n == t->nil)
+        return;
+    bst_inorder_collect(t, n->left, c);
+    assert(c->n < MAX_COLLECT);
+    c->keys[c->n] = n->key;
+    c->values[c->n] = n->value;
+    c->n++;
+    bst_inorder_collect(t, n->right, c);
+}
+
+/* Milestone checkpoint: rb_insert here is BST-only (no red-black fixup yet),
+ * so rb_validate cannot be used to check these trees -- a red root, or a red
+ * node with a red parent, is expected and will fail rb_validate's checks
+ * until fixup lands. These cases instead inspect tree shape directly
+ * (white-box, via the #include "../src/rbtree.c" above) and check rb_destroy
+ * against real rb_insert-built nodes rather than mk_node fixtures.
+ *
+ * NOTE: test_rb_insert's cases 5 and 7-11 above also build multi-node trees
+ * via rb_insert and then call rb_validate -- those are fixup-dependent and
+ * are expected to fail (aborting the test binary at that assertion, since
+ * this suite uses plain assert()) until insert-fixup is implemented. That is
+ * a known, temporary gap, not something to fix by weakening those tests. */
+static void test_rb_insert_bst_only(void)
+{
+    /* Every node inserted without fixup is RED, including the root -- per
+     * CLRS's RB-INSERT, forcing the root BLACK is RB-INSERT-FIXUP's job, not
+     * plain BST insertion's. Insertion order below (m, f, t, d, h) produces
+     * a known two-level shape: m is root; f and t are its children; d and h
+     * are f's children. */
+    {
+        static const char *keys[] = { "m", "f", "t", "d", "h" };
+        rbtree_t *t = rb_create(NULL);
+        assert(t);
+        for (size_t i = 0; i < sizeof keys / sizeof keys[0]; i++)
+            assert(rb_insert(t, keys[i], (void *)keys[i]) == 0);
+        assert(rb_size(t) == 5);
+
+        rbnode_t *m = t->root;
+        assert(strcmp(m->key, "m") == 0);
+        assert(m->color == RB_RED);
+        assert(m->parent == t->nil);
+
+        rbnode_t *f = m->left, *tt = m->right;
+        assert(strcmp(f->key, "f") == 0 && f->color == RB_RED && f->parent == m);
+        assert(strcmp(tt->key, "t") == 0 && tt->color == RB_RED && tt->parent == m);
+        assert(tt->left == t->nil && tt->right == t->nil);
+
+        rbnode_t *d = f->left, *h = f->right;
+        assert(strcmp(d->key, "d") == 0 && d->color == RB_RED && d->parent == f);
+        assert(strcmp(h->key, "h") == 0 && h->color == RB_RED && h->parent == f);
+        assert(d->left == t->nil && d->right == t->nil);
+        assert(h->left == t->nil && h->right == t->nil);
+
+        collect_ctx_t collected = {0};
+        bst_inorder_collect(t, t->root, &collected);
+        static const char *sorted[] = { "d", "f", "h", "m", "t" };
+        assert(collected.n == 5);
+        for (int i = 0; i < collected.n; i++)
+            assert(strcmp(collected.keys[i], sorted[i]) == 0);
+
+        rb_destroy(t);
+        printf("ok - insert_bst_shape_multilevel\n");
+    }
+
+    /* An ascending run with no fixup degenerates into a pure right-leaning
+     * chain -- every node's left child is nil, and parent/right pointers
+     * form a straight line from root to the last-inserted key. */
+    {
+        static const char *keys[] = { "a", "b", "c", "d", "e" };
+        size_t run_len = sizeof keys / sizeof keys[0];
+        rbtree_t *t = rb_create(NULL);
+        assert(t);
+        for (size_t i = 0; i < run_len; i++)
+            assert(rb_insert(t, keys[i], (void *)keys[i]) == 0);
+        assert(rb_size(t) == run_len);
+
+        rbnode_t *cur = t->root;
+        rbnode_t *prev = t->nil;
+        /* invariant: cur is the node at chain position i, always reached by
+         * following ->right from the previous node, with an empty left
+         * subtree at every step. */
+        for (size_t i = 0; i < run_len; i++) {
+            assert(cur != t->nil);
+            assert(strcmp(cur->key, keys[i]) == 0);
+            assert(cur->color == RB_RED);
+            assert(cur->left == t->nil);
+            assert(cur->parent == prev);
+            prev = cur;
+            cur = cur->right;
+        }
+        assert(cur == t->nil); /* chain ends at the last key's right nil */
+
+        rb_destroy(t);
+        printf("ok - insert_bst_ascending_chain_shape\n");
+    }
+
+    /* rb_destroy must free every real rb_insert-built node (struct + key
+     * copy) plus nil and the tree struct, and must run value_free on every
+     * still-owned value -- not just on mk_node fixtures, as
+     * destroy_and_check_frees's other callers exercise. */
+    {
+        rbtree_t *t = rb_create(track_free);
+        assert(t);
+        reset_tracking();
+
+        static const char *keys[] = { "delta", "alpha", "gamma", "beta" };
+        size_t n = sizeof keys / sizeof keys[0];
+        void *values[4];
+        for (size_t i = 0; i < n; i++) {
+            values[i] = malloc(8);
+            assert(values[i]);
+            strcpy(values[i], keys[i]);
+            assert(rb_insert(t, keys[i], values[i]) == 0);
+        }
+        assert(rb_size(t) == n);
+
+        fault_malloc_arm(0);          /* never fails; just resets the free counter */
+        rb_destroy(t);
+        assert(fault_malloc_free_count() == (int)n * 2 + 2);
+        fault_malloc_disarm();
+
+        for (size_t i = 0; i < n; i++)
+            assert(was_freed(values[i]));
+        assert(freed_count == (int)n);
+        printf("ok - insert_bst_destroy_frees_real_nodes\n");
+    }
+}
+
 int main(void)
 {
     test_rb_validate();
     test_rb_create();
+    test_rb_insert_bst_only();
     test_rb_insert();
     return 0;
 }
