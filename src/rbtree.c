@@ -91,12 +91,47 @@ void rb_foreach(const rbtree_t *t,
     /* TODO: in-order traversal, stopping at t->nil. */
 }
 
+/* Checks order, no-red-red, and black-height for the subtree rooted at x;
+ * reports 1/0 and writes that subtree's black-height to *bh. lo/hi are the
+ * open key bound threaded down from ancestors (NULL = unbounded), which is
+ * what catches an order violation against a distant ancestor, not just x's
+ * immediate parent. */
+static int rb_validate_node(const rbtree_t *t, const rbnode_t *x,
+                             const char *lo, const char *hi, int *bh)
+{
+    if (x == t->nil) {
+        *bh = 0;
+        return 1;
+    }
+
+    if (lo && strcmp(x->key, lo) <= 0)
+        return 0;
+    if (hi && strcmp(x->key, hi) >= 0)
+        return 0;
+
+    if (x->color == RB_RED &&
+        (x->left->color == RB_RED || x->right->color == RB_RED))
+        return 0;
+
+    int bhL, bhR;
+    if (!rb_validate_node(t, x->left, lo, x->key, &bhL))
+        return 0;
+    if (!rb_validate_node(t, x->right, x->key, hi, &bhR))
+        return 0;
+    if (bhL != bhR)
+        return 0;
+
+    *bh = bhL + (x->color == RB_BLACK ? 1 : 0);
+    return 1;
+}
+
 int rb_validate(const rbtree_t *t)
 {
-    (void)t;
-    /* TODO: BST order, red implies black children, equal black-height on
-     * every root-to-nil path. */
-    return -1;
+    if (t->root->color != RB_BLACK)
+        return -1;
+
+    int bh;
+    return rb_validate_node(t, t->root, NULL, NULL, &bh) ? 0 : -1;
 }
 
 void rb_destroy(rbtree_t *t)
