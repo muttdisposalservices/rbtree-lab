@@ -62,6 +62,17 @@ static int was_freed(void *value)
     return 0;
 }
 
+/* Distinguishes "freed once" from "freed twice" (a real double free), which
+ * was_freed's plain membership check can't tell apart. */
+static int free_occurrences(void *value)
+{
+    int n = 0;
+    for (int i = 0; i < freed_count; i++)
+        if (freed_values[i] == value)
+            n++;
+    return n;
+}
+
 #define MAX_COLLECT 16
 typedef struct {
     const char *keys[MAX_COLLECT];
@@ -175,6 +186,18 @@ static rbnode_t *mk_node(rbtree_t *t, const char *key, int color)
     return n;
 }
 
+/* Every mk_node-built fixture allocates exactly node_count node structs and
+ * node_count key buffers; rb_destroy must free all of those plus nil and the
+ * tree struct itself -- no more (a leak) and no less (an over-free, or nil
+ * getting freed more than once if traversal doesn't stop at the sentinel). */
+static void destroy_and_check_frees(rbtree_t *t, int node_count)
+{
+    fault_malloc_arm(0);          /* never fails; just resets the free counter */
+    rb_destroy(t);
+    assert(fault_malloc_free_count() == node_count * 2 + 2);
+    fault_malloc_disarm();
+}
+
 /* rb_validate must enforce four invariants: BST order, red implies black
  * children, equal black-height on every root-to-nil path, and the root is
  * black. Each case below isolates exactly one of those, and every violation
@@ -226,7 +249,7 @@ static void test_rb_validate(void)
             t->size = 3;
 
             assert(rb_validate(t) != 0);
-            rb_destroy(t);
+            destroy_and_check_frees(t, 3);
             printf("ok - %s\n", cases[i].name);
         }
     }
@@ -249,7 +272,7 @@ static void test_rb_validate(void)
         t->root = root;
         t->size = 2;
         assert(rb_validate(t) != 0);
-        rb_destroy(t);
+        destroy_and_check_frees(t, 2);
         printf("ok - validate_bst_order_immediate_left_too_big\n");
     }
     {
@@ -264,7 +287,7 @@ static void test_rb_validate(void)
         t->root = root;
         t->size = 2;
         assert(rb_validate(t) != 0);
-        rb_destroy(t);
+        destroy_and_check_frees(t, 2);
         printf("ok - validate_bst_order_immediate_right_too_small\n");
     }
     {
@@ -284,7 +307,7 @@ static void test_rb_validate(void)
         t->root = root;
         t->size = 3;
         assert(rb_validate(t) != 0);
-        rb_destroy(t);
+        destroy_and_check_frees(t, 3);
         printf("ok - validate_bst_order_deep_left_exceeds_root\n");
     }
     {
@@ -304,7 +327,7 @@ static void test_rb_validate(void)
         t->root = root;
         t->size = 3;
         assert(rb_validate(t) != 0);
-        rb_destroy(t);
+        destroy_and_check_frees(t, 3);
         printf("ok - validate_bst_order_deep_right_below_root\n");
     }
 
@@ -323,7 +346,7 @@ static void test_rb_validate(void)
         t->root = root;
         t->size = 2;
         assert(rb_validate(t) != 0);
-        rb_destroy(t);
+        destroy_and_check_frees(t, 2);
         printf("ok - validate_black_height_left_heavy\n");
     }
     {
@@ -339,7 +362,7 @@ static void test_rb_validate(void)
         t->root = root;
         t->size = 2;
         assert(rb_validate(t) != 0);
-        rb_destroy(t);
+        destroy_and_check_frees(t, 2);
         printf("ok - validate_black_height_right_heavy\n");
     }
 
@@ -356,7 +379,7 @@ static void test_rb_validate(void)
         t->root = root;
         t->size = 1;
         assert(rb_validate(t) != 0);
-        rb_destroy(t);
+        destroy_and_check_frees(t, 1);
         printf("ok - validate_root_must_be_black\n");
     }
 }
@@ -367,16 +390,23 @@ typedef struct {
     void *value;
     int fail_at;           /* 0 = no injected malloc failure */
     int expect_ok;         /* expect rb_insert to return 0 */
+    int expect_free_count; /* rb_free calls during the faulted insert; -1 = n/a */
 } insert_case_t;
 
 /* Cases 1-3: baseline success, and injected failure on each of
  * rb_insert's internal allocations. Order-agnostic about which
  * allocation (node struct vs. key copy) fail_at hits -- the header's
- * -1 contract must hold identically either way. */
+ * -1 contract must hold identically either way.
+ *
+ * expect_free_count mirrors create_cases' reasoning: fail_at=1 fails on the
+ * very first rb_malloc call (the node struct), before anything else is
+ * allocated, so cleanup frees nothing (0); fail_at=2 fails on the second call
+ * (the key copy) after the node struct already succeeded, so cleanup frees
+ * exactly that one allocation (1). */
 static const insert_case_t insert_cases[] = {
-    { "insert_into_empty_success", "alpha", "alpha-value", 0, 1 },
-    { "insert_fails_first_alloc",  "beta",  "beta-value",  1, 0 },
-    { "insert_fails_second_alloc", "gamma", "gamma-value", 2, 0 },
+    { "insert_into_empty_success", "alpha", "alpha-value", 0, 1, -1 },
+    { "insert_fails_first_alloc",  "beta",  "beta-value",  1, 0,  0 },
+    { "insert_fails_second_alloc", "gamma", "gamma-value", 2, 0,  1 },
 };
 
 static void test_rb_insert(void)
@@ -392,8 +422,10 @@ static void test_rb_insert(void)
         if (c->fail_at)
             fault_malloc_arm(c->fail_at);
         int rc = rb_insert(t, c->key, c->value);
-        if (c->fail_at)
+        if (c->fail_at) {
+            assert(fault_malloc_free_count() == c->expect_free_count);
             fault_malloc_disarm();
+        }
 
         assert((rc == 0) == c->expect_ok);
         assert(rb_size(t) == (size_t)(c->expect_ok ? 1 : 0));
@@ -448,11 +480,33 @@ static void test_rb_insert(void)
 
         assert(rb_size(t) == 1);
         assert(was_freed(old_value));
+        assert(free_occurrences(old_value) == 1); /* not freed twice */
         assert(!was_freed(new_value));
         assert(rb_find(t, "dup") == new_value);
 
+        /* A second overwrite of the same key, armed so the very first
+         * rb_malloc call would fail: overwriting an existing key must not
+         * allocate a new node or key copy (the key is already stored), so a
+         * correct rb_insert makes zero rb_malloc/rb_free calls here and
+         * still returns 0 despite the arming. An implementation that always
+         * allocates a fresh node on every insert (even for a duplicate key)
+         * would either fail here or leak the discarded new node/key. */
+        char *third_value = malloc(8);
+        assert(third_value);
+        strcpy(third_value, "third");
+        fault_malloc_arm(1);
+        int rc = rb_insert(t, "dup", third_value);
+        assert(fault_malloc_free_count() == 0);
+        fault_malloc_disarm();
+        assert(rc == 0);
+
+        assert(rb_size(t) == 1);
+        assert(free_occurrences(new_value) == 1); /* freed once, not twice */
+        assert(!was_freed(third_value));
+        assert(rb_find(t, "dup") == third_value);
+
         /* A couple more surviving entries, so destroy has to walk multiple
-         * nodes, not just the one left over from the overwrite. */
+         * nodes, not just the one left over from the overwrites. */
         char *extra1 = malloc(8);
         char *extra2 = malloc(8);
         assert(extra1 && extra2);
@@ -461,13 +515,21 @@ static void test_rb_insert(void)
         assert(rb_insert(t, "extra-key-1", extra1) == 0);
         assert(rb_insert(t, "extra-key-2", extra2) == 0);
 
+        /* The repeated overwrite must have updated the existing node in
+         * place, not left a stale second "dup" node behind: exactly 3
+         * distinct keys should be visible to both validate and foreach. */
+        assert(rb_validate(t) == 0);
+        collect_ctx_t after_overwrite = {0};
+        rb_foreach(t, collect_cb, &after_overwrite);
+        assert(after_overwrite.n == 3);
+
         rb_destroy(t);
         /* rb_destroy must run value_free on every value still owned by the
-         * tree, not just the one already freed by the earlier overwrite. */
-        assert(was_freed(new_value));
+         * tree, not just the ones already freed by the earlier overwrites. */
+        assert(was_freed(third_value));
         assert(was_freed(extra1));
         assert(was_freed(extra2));
-        assert(freed_count == 4); /* old_value (overwrite) + 3 freed by destroy */
+        assert(freed_count == 5); /* old_value + new_value (overwrites) + 3 by destroy */
         printf("ok - insert_overwrite_frees_old_value\n");
     }
 
@@ -680,6 +742,51 @@ static void test_rb_insert(void)
 
         rb_destroy(t);
         printf("ok - insert_rebalances_mixed_order\n");
+    }
+
+    /* Case 12: overwriting an existing key when value_free is NULL must not
+     * crash by calling through a NULL function pointer, and must still
+     * replace the stored value. */
+    {
+        rbtree_t *t = rb_create(NULL);
+        assert(t);
+        char value_a[] = "A", value_b[] = "B";
+
+        assert(rb_insert(t, "x", value_a) == 0);
+        assert(rb_insert(t, "x", value_b) == 0);
+
+        assert(rb_size(t) == 1);
+        assert(rb_find(t, "x") == value_b);
+
+        rb_destroy(t);
+        printf("ok - insert_duplicate_key_null_value_free\n");
+    }
+
+    /* Case 13: the caller's key buffer is freed immediately after insert
+     * returns. Unlike the memset-based key-copy check above (which only
+     * catches the tree storing a pointer that later gets mutated), freeing
+     * the buffer outright means any lingering pointer into it is a genuine
+     * use-after-free that ASan/valgrind will catch, not just a stale value. */
+    {
+        rbtree_t *t = rb_create(NULL);
+        assert(t);
+
+        char *heap_key = malloc(6);
+        assert(heap_key);
+        strcpy(heap_key, "epsln");
+        assert(rb_insert(t, heap_key, "epsilon-value") == 0);
+        free(heap_key);
+
+        assert(rb_size(t) == 1);
+        assert(strcmp(rb_find(t, "epsln"), "epsilon-value") == 0);
+
+        collect_ctx_t collected = {0};
+        rb_foreach(t, collect_cb, &collected);
+        assert(collected.n == 1);
+        assert(strcmp(collected.keys[0], "epsln") == 0);
+
+        rb_destroy(t);
+        printf("ok - insert_key_survives_caller_free\n");
     }
 }
 

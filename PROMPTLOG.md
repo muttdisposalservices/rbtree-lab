@@ -138,4 +138,6 @@
         ==1943819==      possibly lost: 0 bytes in 0 blocks
         ==1943819==    still reachable: 1,104 bytes in 3 blocks
         ==1943819==         suppressed: 0 bytes in 0 blocks
-        >> Same as earlier, showing rb_validate doesn't risk memory problems like the other functions.
+        >> Same as earlier, showing rb_validate doesn't risk memory problems like the other functions. Moving to adversarial review.
+    
+    Pushed new context against src/rbtree.c and tests/test_rbtree.c. Covered second-allocation leak case in insert_case_t via expected-free-count logic. Updated rb_insert tests to prevent duplicate key insertion and failed value overwrites. Added test against segfault from duplicate key with value_free != and == NULL via insert_duplicate_key_null_value_free. Added insert_key_survives_caller_free to ensure pointer copy instead of storage. Revised rb_destroy tests to consider 2(node-count) + 2 frees (after implementation) instead of 2 (pre-implementation). This will prevent under-/over-freeing, as well as recursing into t->nil and trying to reference nil->key.
