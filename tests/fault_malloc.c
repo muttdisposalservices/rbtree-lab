@@ -1,8 +1,10 @@
+#include "../src/rb_alloc.h"
 #include <stdlib.h>
 
-/* Strong overrides of the weak rb_malloc/rb_free in src/rbtree.c (see
- * CLAUDE.md's allocation-routing rule). Lets tests force a specific
- * rb_malloc call to fail without touching libc malloc or the src build. */
+/* Definitions of rb_malloc/rb_free for the test binary. The Makefile links
+ * this file instead of src/rb_alloc.c into $(BIN), so these are the only
+ * rb_malloc/rb_free in that binary -- lets tests force a specific rb_malloc
+ * call to fail without touching libc malloc or the production wrappers. */
 
 static int fault_armed = 0;
 static int fault_target = 0;

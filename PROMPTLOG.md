@@ -192,3 +192,6 @@
         ==1978299==    still reachable: 4,372 bytes in 12 blocks
         ==1978299==         suppressed: 0 bytes in 0 blocks
         >> Difference due to Claude's use of piped output in a different environment. Still-reachable bytes aused by the lack of rb_insert fixup causing an rb_validate assertion to fail before reaching rb_destroy, which would clear 11 blocks. 1 block is for malloc, so there're no leaks.
+
+8/31/26:
+    Asked for a plan to pull the rb_malloc wrappers out of rbtree.c and fault_malloc.c and consolidate/move them into src/rb_alloc.c. Was advised to move rbtree.c's wrappers into rb_alloc.c and adjust the MAKEFILE to add test_rbtree.c into the test rather than compile binary, plus some additional include changes to allow for cleaner linking. rbtree.c now includes rb_alloc.c, and test_rbtree.c has fault_malloc.c. Clarified gcc and asan updates.

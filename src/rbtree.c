@@ -1,18 +1,6 @@
 #include "rbtree.h"
-#include <stdlib.h>
+#include "rb_alloc.h"
 #include <string.h>
-
-/* Sole allocation path (CLAUDE.md routing rule). Weak so a test build (or a
- * future assignment) can link in a strong override for a custom allocator. */
-__attribute__((weak)) void *rb_malloc(size_t size)
-{
-    return malloc(size);
-}
-
-__attribute__((weak)) void rb_free(void *ptr)
-{
-    free(ptr);
-}
 
 typedef struct rbnode {
     char *key;               /* owned copy; NULL on the nil sentinel */
@@ -56,6 +44,44 @@ cleanup_tree:
     return NULL;
 }
 
+static void rb_rotate_left(rbtree_t *t, rbnode_t *nodeToRotate)
+{
+    rbnode_t *rightChild = nodeToRotate->right;
+    nodeToRotate->right = rightChild->left;
+    if (rightChild->left != t->nil)
+        rightChild->left->parent = nodeToRotate;
+
+    rightChild->parent = nodeToRotate->parent;
+    if (nodeToRotate->parent == t->nil)
+        t->root = rightChild;
+    else if (nodeToRotate == nodeToRotate->parent->left)
+        nodeToRotate->parent->left = rightChild;
+    else
+        nodeToRotate->parent->right = rightChild;
+
+    rightChild->left = nodeToRotate;
+    nodeToRotate->parent = rightChild;
+}
+
+static void rb_rotate_right(rbtree_t *t, rbnode_t *nodeToRotate)
+{
+    rbnode_t *leftChild = nodeToRotate->left;
+    nodeToRotate->left = leftChild->right;
+    if (leftChild->right != t->nil)
+        leftChild->right->parent = nodeToRotate;
+
+    leftChild->parent = nodeToRotate->parent;
+    if (nodeToRotate->parent == t->nil)
+        t->root = leftChild;
+    else if (nodeToRotate == nodeToRotate->parent->right)
+        nodeToRotate->parent->right = leftChild;
+    else
+        nodeToRotate->parent->left = leftChild;
+
+    leftChild->right = nodeToRotate;
+    nodeToRotate->parent = leftChild;
+}
+
 int rb_insert(rbtree_t *t, const char *key, void *value)
 {
     rbnode_t *cur = t->root;
@@ -78,13 +104,11 @@ int rb_insert(rbtree_t *t, const char *key, void *value)
     }
 
     rbnode_t *n = rb_malloc(sizeof *n);
-    if (!n)
-        return -1;                   /* nothing allocated yet, nothing to free */
+    if (!n) return -1;                   /* nothing allocated yet, nothing to free */
 
     size_t klen = strlen(key) + 1;
     char *kcopy = rb_malloc(klen);
-    if (!kcopy)
-        goto cleanup_node;           /* second alloc failed, unwind the first */
+    if (!kcopy) goto cleanup_node;           /* second alloc failed, unwind the first */
     memcpy(kcopy, key, klen);
 
     n->key    = kcopy;
@@ -92,16 +116,63 @@ int rb_insert(rbtree_t *t, const char *key, void *value)
     n->left   = n->right = t->nil;
     n->parent = parent;
     n->color  = RB_RED;
+
+    if (parent == t->nil) {
+        t->root = n;
+    } else if (cmp < 0) {
+        parent->left = n;
+    } else {
+        parent->right = n;
+    }
+    
+
     /* TODO: red-black fixup. A fresh non-root node inserted red can now
      * have a red parent, which rb_validate will reject until fixup lands. */
 
-    if (parent == t->nil)
-        t->root = n;
-    else if (cmp < 0)
-        parent->left = n;
-    else
-        parent->right = n;
-
+    rbnode_t *problemNode = n;
+    while (problemNode->parent->color == RB_RED) {
+        if (problemNode->parent == problemNode->parent->parent->left) {
+            rbnode_t *uncle = problemNode->parent->parent->right;  
+            if (uncle->color == RB_RED) {
+                // Case 1
+                problemNode->parent->color = RB_BLACK;
+                uncle->color = RB_BLACK;
+                problemNode->parent->parent->color = RB_RED;
+                problemNode = problemNode->parent->parent;
+            } else {
+                if (problemNode == problemNode->parent->right) {
+                    // Case 2
+                    problemNode = problemNode->parent;
+                    rb_rotate_left(t, problemNode);
+                }
+                // Case 3
+                problemNode->parent->color = RB_BLACK;
+                problemNode->parent->parent->color = RB_RED;
+                rb_rotate_right(t, problemNode->parent->parent);
+            }
+        } else {
+            // (mirror image, swap left/right)
+            rbnode_t *uncle = problemNode->parent->parent->left;
+            if (uncle->color == RB_RED) {
+                // Case 1
+                problemNode->parent->color = RB_BLACK;
+                uncle->color = RB_BLACK;
+                problemNode->parent->parent->color = RB_RED;
+                problemNode = problemNode->parent->parent;
+            } else {
+                if (problemNode == problemNode->parent->left) {
+                    // Case 2
+                    problemNode = problemNode->parent;
+                    rb_rotate_right(t, problemNode);
+                }
+                // Case 3
+                problemNode->parent->color = RB_BLACK;
+                problemNode->parent->parent->color = RB_RED;
+                rb_rotate_left(t, problemNode->parent->parent);
+            }
+        }
+    }
+    t->root->color = RB_BLACK;
     t->size++;
     return 0;
 
@@ -138,6 +209,7 @@ void rb_foreach(const rbtree_t *t,
     (void)fn;
     (void)ctx;
     /* TODO: in-order traversal, stopping at t->nil. */
+    
 }
 
 /* Checks order, no-red-red, and black-height for the subtree rooted at x;

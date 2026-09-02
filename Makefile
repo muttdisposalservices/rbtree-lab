@@ -1,19 +1,21 @@
 CC := gcc
-CFLAGS := -std=c2x -Wall -Wextra -Werror -g -O1 -Iinclude
-SRC := src/rbtree.c
+CFLAGS := -std=c23 -Wall -Wextra -Werror -g -O1 -Iinclude
+SRC := src/rbtree.c src/rb_alloc.c
 TSRC := tests/test_rbtree.c tests/fault_malloc.c
 BIN := build/test_rbtree
 FUZZBIN := build/fuzz
 
 all: $(BIN) $(FUZZBIN)
 
-# $(SRC) stays a prerequisite (rebuild on rbtree.c changes) but is not passed
-# to the compile line: test_rbtree.c #includes src/rbtree.c directly for
-# white-box access, so compiling $(SRC) again here would double-define symbols.
-$(BIN): $(SRC) $(TSRC) include/rbtree.h
+# $(SRC) stays a prerequisite (rebuild on rbtree.c/rb_alloc.c changes) but is
+# not passed to the compile line: test_rbtree.c #includes src/rbtree.c
+# directly for white-box access, so compiling $(SRC) again here would
+# double-define symbols. src/rb_alloc.c must also stay out of this recipe --
+# tests/fault_malloc.c supplies rb_malloc/rb_free for this binary instead.
+$(BIN): $(SRC) $(TSRC) include/rbtree.h src/rb_alloc.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) $(TSRC) -o $@
-$(FUZZBIN): $(SRC) tests/fuzz.c include/rbtree.h
+$(FUZZBIN): $(SRC) tests/fuzz.c include/rbtree.h src/rb_alloc.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) $(SRC) tests/fuzz.c -o $@
 test: $(BIN) $(FUZZBIN)
