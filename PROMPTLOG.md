@@ -195,3 +195,105 @@
 
 8/31/26:
     Asked for a plan to pull the rb_malloc wrappers out of rbtree.c and fault_malloc.c and consolidate/move them into src/rb_alloc.c. Was advised to move rbtree.c's wrappers into rb_alloc.c and adjust the MAKEFILE to add test_rbtree.c into the test rather than compile binary, plus some additional include changes to allow for cleaner linking. rbtree.c now includes rb_alloc.c, and test_rbtree.c has fault_malloc.c. Clarified gcc and asan updates.
+
+    Walked through insert fixup cases (black parent -> no violation), red uncle (if "triangle" -> rotate w/ parent, then rotate "line" unconditionally, recolor root). Rewrote output to be more legible. Refactored test cases: rb_insert_bst_only was dependent on no fixup, so its bst structure and color case test were scrapped. The second and third cases were repurposed to represent triangle and line fixup tests using rb_validate later.
+
+    Asked for foreach stub syntax walkthrough, since I didn't recognize the structure. Wrote it myself for legibility and to practice C pointers and function pointers. make test passes and make asan shows no errors; make memcheck has issues with asan but 0 in use bytes and 0 allocs/frees/bytes allocated - all heap blocks freed, so no leaks possible.
+
+    Battery output:
+        test:
+            ./build/test_rbtree && ./build/fuzz 100000
+            ok - validate_red_red_LL
+            ok - validate_red_red_LR
+            ok - validate_red_red_RL
+            ok - validate_red_red_RR
+            ok - validate_bst_order_immediate_left_too_big
+            ok - validate_bst_order_immediate_right_too_small
+            ok - validate_bst_order_deep_left_exceeds_root
+            ok - validate_bst_order_deep_right_below_root
+            ok - validate_black_height_left_heavy
+            ok - validate_black_height_right_heavy
+            ok - validate_root_must_be_black
+            ok - create_null_value_free
+            ok - create_nonnull_value_free
+            ok - create_fail_first_alloc
+            ok - create_fail_second_alloc
+            ok - create_independent_instances
+            ok - create_destroy_null_safe
+            ok - insert_into_empty_success
+            ok - insert_fails_first_alloc
+            ok - insert_fails_second_alloc
+            ok - insert_failure_value_not_consumed
+            ok - insert_overwrite_frees_old_value
+            ok - insert_distinct_keys_prove_key_copy
+            ok - insert_rebalances_ascending_run
+            ok - insert_rebalances_descending_run
+            ok - insert_rebalances_ll_line
+            ok - insert_rebalances_rr_line
+            ok - insert_rebalances_lr_zigzag
+            ok - insert_rebalances_rl_zigzag
+            ok - insert_rebalances_mixed_order
+            ok - insert_duplicate_key_null_value_free
+            ok - insert_key_survives_caller_free
+            ok - insert_fixup_recolor_reaches_root
+            ok - insert_destroy_frees_real_nodes
+        
+        asan:
+            rm -rf build
+            gcc -std=c23 -Wall -Wextra -Werror -g -O1 -Iinclude -fsanitize=address,undefined -fno-omit-frame-pointer tests/test_rbtree.c tests/fault_malloc.c -o build/test_rbtree
+            gcc -std=c23 -Wall -Wextra -Werror -g -O1 -Iinclude -fsanitize=address,undefined -fno-omit-frame-pointer src/rbtree.c src/rb_alloc.c tests/fuzz.c -o build/fuzz
+            ./build/test_rbtree && ./build/fuzz 100000
+            ok - validate_red_red_LL
+            ok - validate_red_red_LR
+            ok - validate_red_red_RL
+            ok - validate_red_red_RR
+            ok - validate_bst_order_immediate_left_too_big
+            ok - validate_bst_order_immediate_right_too_small
+            ok - validate_bst_order_deep_left_exceeds_root
+            ok - validate_bst_order_deep_right_below_root
+            ok - validate_black_height_left_heavy
+            ok - validate_black_height_right_heavy
+            ok - validate_root_must_be_black
+            ok - create_null_value_free
+            ok - create_nonnull_value_free
+            ok - create_fail_first_alloc
+            ok - create_fail_second_alloc
+            ok - create_independent_instances
+            ok - create_destroy_null_safe
+            ok - insert_into_empty_success
+            ok - insert_fails_first_alloc
+            ok - insert_fails_second_alloc
+            ok - insert_failure_value_not_consumed
+            ok - insert_overwrite_frees_old_value
+            ok - insert_distinct_keys_prove_key_copy
+            ok - insert_rebalances_ascending_run
+            ok - insert_rebalances_descending_run
+            ok - insert_rebalances_ll_line
+            ok - insert_rebalances_rr_line
+            ok - insert_rebalances_lr_zigzag
+            ok - insert_rebalances_rl_zigzag
+            ok - insert_rebalances_mixed_order
+            ok - insert_duplicate_key_null_value_free
+            ok - insert_key_survives_caller_free
+            ok - insert_fixup_recolor_reaches_root
+            ok - insert_destroy_frees_real_nodes
+
+        memcheck:
+            ==153953== Process terminating with default action of signal 11 (SIGSEGV): dumping core
+            ==153953==  General Protection Fault
+            ==153953==    at 0x561E852: __pthread_once_slow (in /usr/lib64/libc.so.6)
+            ==153953==    by 0x56DA7B2: __rpc_thread_variables (in /usr/lib64/libc.so.6)
+            ==153953==    by 0x572B38C: free_mem (in /usr/lib64/libc.so.6)
+            ==153953==    by 0x572AEB1: __libc_freeres (in /usr/lib64/libc.so.6)
+            ==153953==    by 0x483E1E7: _vgnU_freeres (vg_preloaded.c:103)
+            ==153953==    by 0x4A2DF5F: ???
+            ==153953==    by 0x49B18D6: __sanitizer::Die() (sanitizer_termination.cpp:59)
+            ==153953==    by 0x497D7FC: __asan::AsanCheckDynamicRTPrereqs() (asan_linux.cpp:168)
+            ==153953==    by 0x498C51E: __asan::AsanInitInternal() [clone .part.0] (asan_rtl.cpp:416)
+            ==153953==    by 0x498C814: AsanInitInternal (asan_rtl.cpp:394)
+            ==153953==    by 0x498C814: __asan::AsanInitFromRtl() [clone .part.0] (asan_rtl.cpp:522)
+            ==153953==    by 0x400669D: _dl_init (dl-init.c:102)
+            ==153953==    by 0x401EF69: ??? (in /usr/lib64/ld-linux-x86-64.so.2)
+
+    Claude output:
+        Running make asan then make memcheck back-to-back (as the battery instructions specify) triggers a pre-existing, self-documented Makefile bug — CFLAGS changes aren't tracked as a dependency, so memcheck silently reused the ASan-instrumented binary from the prior step instead of rebuilding plain, and Valgrind can't run ASan binaries (they both hook malloc/free). A make clean between steps sidesteps it, which is what I did to get the real result above [make test, make asan, *make clean*, make memcheck]. This is a build-system gap, not a code defect.

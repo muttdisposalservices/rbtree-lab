@@ -201,15 +201,19 @@ void *rb_find(const rbtree_t *t, const char *key)
     return NULL;
 }
 
+static void rb_foreach_helper(const rbtree_t *t, rbnode_t *checkNode, void (*callerFunction)(const char *key, void *value, void *callerFunctionContext), void (*callerFunctionContext)) {
+    if (checkNode == t-> nil) return; // Terminate at t->nil
+    rb_foreach_helper(t, checkNode->left, callerFunction, callerFunctionContext); // Recurse left first (inorder)
+    callerFunction(checkNode->key, checkNode->value, callerFunctionContext); // Run callerFunction to give them their output
+    rb_foreach_helper(t, checkNode->right, callerFunction, callerFunctionContext); // Recurse right last (no more left descendants in subtree)
+}
+
 void rb_foreach(const rbtree_t *t,
-                void (*fn)(const char *key, void *value, void *ctx),
-                void *ctx)
+                void (*callerFunction)(const char *key, void *value, void *callerFunctionContext),
+                void *callerFunctionContext)
 {
-    (void)t;
-    (void)fn;
-    (void)ctx;
     /* TODO: in-order traversal, stopping at t->nil. */
-    
+    rb_foreach_helper(t, t->root, callerFunction, callerFunctionContext);
 }
 
 /* Checks order, no-red-red, and black-height for the subtree rooted at x;
