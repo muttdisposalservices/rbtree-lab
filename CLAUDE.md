@@ -3,7 +3,7 @@
 - Build & unit tests: ‘make test‘
 - Sanitizers: ‘make asan‘ Valgrind: ‘make memcheck‘
 - A change is DONE only when all three pass. Always run them; show output.
-- Route all allocations in src/rbtree.c through two rb_malloc and rb_free found in src/rb_alloc.c.
+- Route all 'malloc's and 'free's through 'rb_malloc' and 'rb_free' found in src/rb_alloc.c.
 ## Hard constraints
 - NEVER modify include/rbtree.h. It is the graded contract.
 - Use include/rbtree.h as a strict reference for allocations and ownership such; every function must follow the rules outlined there.

@@ -291,7 +291,8 @@ int rb_delete(rbtree_t *t, const char *key)
                 }
                 if (sibling->left->color == RB_BLACK && sibling->right->color == RB_BLACK) {
                     // Case 2
-                    sibling->color = RB_RED;
+                    if (sibling != t->nil)   /* t->nil is an immutable black constant */
+                        sibling->color = RB_RED;
                     fixNode = fixNode->parent;
                 } else {
                     if (sibling->right->color == RB_BLACK) {
@@ -320,7 +321,8 @@ int rb_delete(rbtree_t *t, const char *key)
                 }
                 if (sibling->right->color == RB_BLACK && sibling->left->color == RB_BLACK) {
                     // Case 2
-                    sibling->color = RB_RED;
+                    if (sibling != t->nil)   /* t->nil is an immutable black constant */
+                        sibling->color = RB_RED;
                     fixNode = fixNode->parent;
                 } else {
                     if (sibling->left->color == RB_BLACK) {
