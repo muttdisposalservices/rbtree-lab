@@ -399,3 +399,7 @@
         ==2139287== 
         ==2139287== All heap blocks were freed -- no leaks are possible
         ==2139287== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)
+
+    Asked for an rb_delete fixup case walkthrough with notes on sibling cases. Asked if rb_insert and rb_delete fixups could be pulled into a shared helper function, but their actual case logic wouldn't improve legibility that way, so fixup remains included in rb_delete itself. Found an issue with rb_splice not reassigning colors, as it was implemented before fixup. Drafted and implemented an edit for rb_splice and the rb_delete fixup. Battery passes, but fixup tests don't exist just yet.
+
+    Pointed to rbtree.h, rbtree.c, and test_rbtree.c to draft table-driven tests now that fixup is included. Fixed a test bug where build_root_two_children had a BST order violation and implemented tests. make clear > make test > make asan > make clear > make memcheck shows no failed tests, no leaked bytes, and no errors in both my terminal and Claude's. Going to implement fuzzer stuff and more delete fixup tests next for better (and necessary) coverage. Planning to finish M2 by tomorrow (Friday) and get M3 done over the weekend.

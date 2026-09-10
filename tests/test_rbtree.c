@@ -1286,11 +1286,232 @@ static void test_bst_delete(void)
     }
 }
 
+/* Fixtures for test_rb_delete_fixup, built the same mk_node/rb_validate way
+ * as test_bst_delete's shape-pinned cases, but chosen so deletion actually
+ * drives the RB_BLACK removedColor fixup loop (or deliberately doesn't),
+ * rather than just exercising BST splice pointers. */
+
+/* Minimal valid 2-node tree: black root with one red leaf child and no
+ * other child. Deleting the red leaf takes removedColor == RB_RED, so the
+ * fixup while loop in rb_delete never runs at all. */
+static rbtree_t *build_red_leaf(void)
+{
+    rbtree_t *t = rb_create(NULL);
+    assert(t);
+    rbnode_t *root = mk_node(t, "m", RB_BLACK);
+    rbnode_t *left = mk_node(t, "d", RB_RED);
+    root->left = left; root->right = t->nil;
+    root->parent = t->nil;
+    left->parent = root;
+    t->root = root;
+    t->size = 2;
+    assert(rb_validate(t) == 0);
+    return t;
+}
+
+static void verify_red_leaf(rbtree_t *t)
+{
+    assert(strcmp(t->root->key, "m") == 0 && t->root->color == RB_BLACK);
+    assert(t->root->left == t->nil);
+    assert(t->root->right == t->nil);
+}
+
+/* root "m"(B) / target "f"(B, leaf) / sibling "t"(RED) with t's own children
+ * "p"(B, leaf) and "x"(B, leaf). Deleting "f" leaves fixNode == nil with a
+ * RED sibling ("t"): Case 1 rotates left about "m" (t<->BLACK, m<->RED),
+ * then the new sibling "p" (BLACK, both children nil) hits Case 2, which
+ * recolors "p" RED and climbs fixNode to "m" -- now RED, so the loop exits
+ * and the trailing `fixNode->color = RB_BLACK` recolors "m" back to BLACK. */
+static rbtree_t *build_black_leaf_red_sibling(void)
+{
+    rbtree_t *t = rb_create(NULL);
+    assert(t);
+    rbnode_t *root = mk_node(t, "m", RB_BLACK);
+    rbnode_t *target = mk_node(t, "f", RB_BLACK);
+    rbnode_t *sibling = mk_node(t, "t", RB_RED);
+    rbnode_t *nephewNear = mk_node(t, "p", RB_BLACK);
+    rbnode_t *nephewFar = mk_node(t, "x", RB_BLACK);
+    root->left = target; root->right = sibling;
+    root->parent = t->nil;
+    target->parent = root; sibling->parent = root;
+    sibling->left = nephewNear; sibling->right = nephewFar;
+    nephewNear->parent = sibling; nephewFar->parent = sibling;
+    t->root = root;
+    t->size = 5;
+    assert(rb_validate(t) == 0);
+    return t;
+}
+
+static void verify_black_leaf_red_sibling(rbtree_t *t)
+{
+    rbnode_t *newRoot = t->root;
+    assert(strcmp(newRoot->key, "t") == 0 && newRoot->color == RB_BLACK);
+    rbnode_t *m = newRoot->left;
+    assert(strcmp(m->key, "m") == 0 && m->color == RB_BLACK);
+    rbnode_t *x = newRoot->right;
+    assert(strcmp(x->key, "x") == 0 && x->color == RB_BLACK);
+    assert(m->parent == newRoot);
+    assert(m->left == t->nil);
+    rbnode_t *p = m->right;
+    assert(strcmp(p->key, "p") == 0 && p->color == RB_RED);
+    assert(p->parent == m);
+}
+
+/* root "m"(B) with two symmetric two-black-leaf-child subtrees: target "d"
+ * (children "b", "f") on the left, "t" (children "s", "y") on the right.
+ * "d"'s in-order successor is its own right child "f" (no left child of its
+ * own), so removedColorNode->parent == target and rb_delete skips the
+ * detach-from-its-own-spot splice. Deleting "d" leaves fixNode == nil under
+ * "f": "f"'s sibling "b" is BLACK with black children -> Case 2 (recolor
+ * "b" RED, fixNode climbs to "f"); "f"'s sibling under "m" is "t", also
+ * BLACK with black children -> Case 2 again (recolor "t" RED, fixNode
+ * climbs to "m" == root, loop exits). */
+static rbtree_t *build_two_children_black_successor(void)
+{
+    rbtree_t *t = rb_create(NULL);
+    assert(t);
+    rbnode_t *root = mk_node(t, "m", RB_BLACK);
+    rbnode_t *target = mk_node(t, "d", RB_BLACK);
+    rbnode_t *targetLeft = mk_node(t, "b", RB_BLACK);
+    rbnode_t *successor = mk_node(t, "f", RB_BLACK);
+    rbnode_t *sibling = mk_node(t, "t", RB_BLACK);
+    rbnode_t *siblingLeft = mk_node(t, "s", RB_BLACK);
+    rbnode_t *siblingRight = mk_node(t, "y", RB_BLACK);
+    root->left = target; root->right = sibling;
+    root->parent = t->nil;
+    target->parent = root; sibling->parent = root;
+    target->left = targetLeft; target->right = successor;
+    targetLeft->parent = target; successor->parent = target;
+    sibling->left = siblingLeft; sibling->right = siblingRight;
+    siblingLeft->parent = sibling; siblingRight->parent = sibling;
+    t->root = root;
+    t->size = 7;
+    assert(rb_validate(t) == 0);
+    return t;
+}
+
+static void verify_two_children_black_successor(rbtree_t *t)
+{
+    rbnode_t *root = t->root;
+    assert(strcmp(root->key, "m") == 0 && root->color == RB_BLACK);
+    rbnode_t *f = root->left;
+    assert(strcmp(f->key, "f") == 0 && f->color == RB_BLACK);
+    assert(f->parent == root);
+    rbnode_t *b = f->left;
+    assert(strcmp(b->key, "b") == 0 && b->color == RB_RED);
+    assert(b->parent == f);
+    assert(f->right == t->nil);
+    rbnode_t *sibling = root->right;
+    assert(strcmp(sibling->key, "t") == 0 && sibling->color == RB_RED);
+    assert(strcmp(sibling->left->key, "s") == 0 && sibling->left->color == RB_BLACK);
+    assert(strcmp(sibling->right->key, "y") == 0 && sibling->right->color == RB_BLACK);
+}
+
+/* root "m"(B) is the target itself: left child "d" (leaf children "b","e")
+ * and right child "t" (children successor "p" and "x"). "m"'s in-order
+ * successor is "p" (leftmost of "t"), whose parent is "t" (not "m"), so
+ * rb_delete first splices "p" out of its own spot (promoting its own right
+ * child, nil) before moving "p" into the root slot. Deleting "m" leaves
+ * fixNode == nil under "t": sibling "x" is BLACK with black children ->
+ * Case 2 (recolor "x" RED, fixNode climbs to "t"); "t"'s sibling "d" is
+ * also BLACK with black children -> Case 2 again (recolor "d" RED, fixNode
+ * climbs to the new root "p", loop exits). */
+static rbtree_t *build_root_two_children(void)
+{
+    rbtree_t *t = rb_create(NULL);
+    assert(t);
+    rbnode_t *root = mk_node(t, "m", RB_BLACK);
+    rbnode_t *left = mk_node(t, "d", RB_BLACK);
+    rbnode_t *leftLeft = mk_node(t, "b", RB_BLACK);
+    rbnode_t *leftRight = mk_node(t, "e", RB_BLACK);
+    rbnode_t *right = mk_node(t, "t", RB_BLACK);
+    rbnode_t *successor = mk_node(t, "p", RB_BLACK);
+    rbnode_t *rightRight = mk_node(t, "x", RB_BLACK);
+    root->left = left; root->right = right;
+    root->parent = t->nil;
+    left->parent = root; right->parent = root;
+    left->left = leftLeft; left->right = leftRight;
+    leftLeft->parent = left; leftRight->parent = left;
+    right->left = successor; right->right = rightRight;
+    successor->parent = right; rightRight->parent = right;
+    t->root = root;
+    t->size = 7;
+    assert(rb_validate(t) == 0);
+    return t;
+}
+
+static void verify_root_two_children(rbtree_t *t)
+{
+    rbnode_t *root = t->root;
+    assert(strcmp(root->key, "p") == 0 && root->color == RB_BLACK);
+    rbnode_t *d = root->left;
+    assert(strcmp(d->key, "d") == 0 && d->color == RB_RED);
+    assert(d->parent == root);
+    assert(strcmp(d->left->key, "b") == 0 && d->left->color == RB_BLACK);
+    assert(strcmp(d->right->key, "e") == 0 && d->right->color == RB_BLACK);
+    rbnode_t *right = root->right;
+    assert(strcmp(right->key, "t") == 0 && right->color == RB_BLACK);
+    assert(right->parent == root);
+    assert(right->left == t->nil);
+    rbnode_t *x = right->right;
+    assert(strcmp(x->key, "x") == 0 && x->color == RB_RED);
+    assert(x->parent == right);
+}
+
+typedef struct {
+    const char *name;
+    rbtree_t *(*build)(void);
+    const char *key;
+    size_t expect_size_after;
+    void (*verify)(rbtree_t *t);
+} delete_fixup_case_t;
+
+static const delete_fixup_case_t delete_fixup_cases[] = {
+    { "delete_red_leaf",                   build_red_leaf,                   "d", 1, verify_red_leaf },
+    { "delete_black_leaf_red_sibling",      build_black_leaf_red_sibling,     "f", 4, verify_black_leaf_red_sibling },
+    { "delete_two_children_black_successor", build_two_children_black_successor, "d", 6, verify_two_children_black_successor },
+    { "delete_root_two_children",          build_root_two_children,          "m", 6, verify_root_two_children },
+};
+
+static void test_rb_delete_fixup(void)
+{
+    size_t n = sizeof delete_fixup_cases / sizeof delete_fixup_cases[0];
+    /* invariant: each iteration gets a fresh, independently-validated
+     * fixture, so a case's outcome never depends on a prior case. */
+    for (size_t i = 0; i < n; i++) {
+        const delete_fixup_case_t *c = &delete_fixup_cases[i];
+        rbtree_t *t = c->build();
+
+        fault_malloc_arm(0);
+        assert(rb_delete(t, c->key) == 0);
+        assert(fault_malloc_free_count() == 2); /* key copy + node struct */
+        fault_malloc_disarm();
+
+        assert(rb_size(t) == c->expect_size_after);
+        assert(rb_find(t, c->key) == NULL);
+        assert(rb_validate(t) == 0);
+
+        collect_ctx_t collected = {0};
+        rb_foreach(t, collect_cb, &collected);
+        assert(collected.n == (int)c->expect_size_after);
+        /* invariant: in-order traversal is still strictly ascending after
+         * whatever rotations/recolors the fixup loop performed. */
+        for (int j = 0; j + 1 < collected.n; j++)
+            assert(strcmp(collected.keys[j], collected.keys[j + 1]) < 0);
+
+        c->verify(t);
+
+        destroy_and_check_frees(t, (int)c->expect_size_after);
+        printf("ok - %s\n", c->name);
+    }
+}
+
 int main(void)
 {
     test_rb_validate();
     test_rb_create();
     test_rb_insert();
     test_bst_delete();
+    test_rb_delete_fixup();
     return 0;
 }

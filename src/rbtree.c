@@ -246,27 +246,101 @@ int rb_delete(rbtree_t *t, const char *key)
     if (target == t->nil)
         return -1;                    /* absent; tree unchanged */
 
+    rbnode_t *removedColorNode = target;  /* node whose original color is leaving the tree */
+    int removedColor = removedColorNode->color;
+    rbnode_t *fixNode;                    /* node that inherits any missing black */
+
     if (target->left == t->nil) {
+        fixNode = target->right;
         rb_splice(t, target, target->right);
     } else if (target->right == t->nil) {
+        fixNode = target->left;
         rb_splice(t, target, target->left);
     } else {
-        rbnode_t *successor = rb_inorder_successor(t, target->right);
+        removedColorNode = rb_inorder_successor(t, target->right);
+        removedColor = removedColorNode->color;
+        fixNode = removedColorNode->right;
 
-        if (successor->parent != target) {
-            rb_splice(t, successor, successor->right);
-            successor->right = target->right;
-            successor->right->parent = successor;
+        if (removedColorNode->parent == target) {
+            fixNode->parent = removedColorNode;   /* rb_splice is skipped below, so set this by hand */
+        } else {
+            rb_splice(t, removedColorNode, removedColorNode->right);
+            removedColorNode->right = target->right;
+            removedColorNode->right->parent = removedColorNode;
         }
 
-        rb_splice(t, target, successor);
-        successor->left = target->left;
-        successor->left->parent = successor;
+        rb_splice(t, target, removedColorNode);
+        removedColorNode->left = target->left;
+        removedColorNode->left->parent = removedColorNode;
+        removedColorNode->color = target->color;   /* successor takes target's color/position */
     }
 
-    /* TODO: red-black fixup. Removing a black node here can under-populate
-     * a path and break the equal-black-height invariant; rb_validate will
-     * reject such trees until fixup lands. */
+    if (removedColor == RB_BLACK) {
+        /* invariant: fixNode carries an extra black that must be resolved
+         * before this loop exits; each pass either absorbs it via a
+         * terminal rotation (case 4) or pushes it one level up (case 2). */
+        while (fixNode != t->root && fixNode->color == RB_BLACK) {
+            if (fixNode == fixNode->parent->left) {
+                rbnode_t *sibling = fixNode->parent->right;
+                if (sibling->color == RB_RED) {
+                    // Case 1
+                    sibling->color = RB_BLACK;
+                    fixNode->parent->color = RB_RED;
+                    rb_rotate_left(t, fixNode->parent);
+                    sibling = fixNode->parent->right;
+                }
+                if (sibling->left->color == RB_BLACK && sibling->right->color == RB_BLACK) {
+                    // Case 2
+                    sibling->color = RB_RED;
+                    fixNode = fixNode->parent;
+                } else {
+                    if (sibling->right->color == RB_BLACK) {
+                        // Case 3
+                        sibling->left->color = RB_BLACK;
+                        sibling->color = RB_RED;
+                        rb_rotate_right(t, sibling);
+                        sibling = fixNode->parent->right;
+                    }
+                    // Case 4
+                    sibling->color = fixNode->parent->color;
+                    fixNode->parent->color = RB_BLACK;
+                    sibling->right->color = RB_BLACK;
+                    rb_rotate_left(t, fixNode->parent);
+                    fixNode = t->root;
+                }
+            } else {
+                // (mirror image, swap left/right)
+                rbnode_t *sibling = fixNode->parent->left;
+                if (sibling->color == RB_RED) {
+                    // Case 1
+                    sibling->color = RB_BLACK;
+                    fixNode->parent->color = RB_RED;
+                    rb_rotate_right(t, fixNode->parent);
+                    sibling = fixNode->parent->left;
+                }
+                if (sibling->right->color == RB_BLACK && sibling->left->color == RB_BLACK) {
+                    // Case 2
+                    sibling->color = RB_RED;
+                    fixNode = fixNode->parent;
+                } else {
+                    if (sibling->left->color == RB_BLACK) {
+                        // Case 3
+                        sibling->right->color = RB_BLACK;
+                        sibling->color = RB_RED;
+                        rb_rotate_left(t, sibling);
+                        sibling = fixNode->parent->left;
+                    }
+                    // Case 4
+                    sibling->color = fixNode->parent->color;
+                    fixNode->parent->color = RB_BLACK;
+                    sibling->left->color = RB_BLACK;
+                    rb_rotate_right(t, fixNode->parent);
+                    fixNode = t->root;
+                }
+            }
+        }
+        fixNode->color = RB_BLACK;
+    }
 
     if (t->value_free)
         t->value_free(target->value);
