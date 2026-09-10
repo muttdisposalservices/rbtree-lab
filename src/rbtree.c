@@ -82,6 +82,34 @@ static void rb_rotate_right(rbtree_t *t, rbnode_t *nodeToRotate)
     nodeToRotate->parent = leftChild;
 }
 
+/* Replaces the subtree rooted at oldSubtree with newSubtree in oldSubtree's
+ * parent (or t->root if it was the root), and repoints newSubtree->parent.
+ * newSubtree may be t->nil. */
+static void rb_splice(rbtree_t *t, rbnode_t *oldSubtree, rbnode_t *newSubtree)
+{
+    if (oldSubtree->parent == t->nil)
+        t->root = newSubtree;
+    else if (oldSubtree == oldSubtree->parent->left)
+        oldSubtree->parent->left = newSubtree;
+    else
+        oldSubtree->parent->right = newSubtree;
+
+    newSubtree->parent = oldSubtree->parent;
+}
+
+/* Leftmost node of the subtree rooted at start: its key is the smallest in
+ * that subtree, i.e. the in-order successor of whatever node start hangs
+ * off of. */
+static rbnode_t *rb_inorder_successor(rbtree_t *t, rbnode_t *start)
+{
+    rbnode_t *cur = start;
+    /* invariant: cur is the smallest-so-far candidate; each step left
+     * strictly shrinks the subtree still to search. */
+    while (cur->left != t->nil)
+        cur = cur->left;
+    return cur;
+}
+
 int rb_insert(rbtree_t *t, const char *key, void *value)
 {
     rbnode_t *cur = t->root;
@@ -199,6 +227,53 @@ void *rb_find(const rbtree_t *t, const char *key)
         cur = (cmp < 0) ? cur->left : cur->right;
     }
     return NULL;
+}
+
+int rb_delete(rbtree_t *t, const char *key)
+{
+    rbnode_t *target = t->root;
+
+    /* invariant: target is the subtree still to search; strcmp narrows left
+     * or right each step until an exact match or the nil sentinel is
+     * reached (same search as rb_find). */
+    while (target != t->nil) {
+        int cmp = strcmp(key, target->key);
+        if (cmp == 0)
+            break;
+        target = (cmp < 0) ? target->left : target->right;
+    }
+
+    if (target == t->nil)
+        return -1;                    /* absent; tree unchanged */
+
+    if (target->left == t->nil) {
+        rb_splice(t, target, target->right);
+    } else if (target->right == t->nil) {
+        rb_splice(t, target, target->left);
+    } else {
+        rbnode_t *successor = rb_inorder_successor(t, target->right);
+
+        if (successor->parent != target) {
+            rb_splice(t, successor, successor->right);
+            successor->right = target->right;
+            successor->right->parent = successor;
+        }
+
+        rb_splice(t, target, successor);
+        successor->left = target->left;
+        successor->left->parent = successor;
+    }
+
+    /* TODO: red-black fixup. Removing a black node here can under-populate
+     * a path and break the equal-black-height invariant; rb_validate will
+     * reject such trees until fixup lands. */
+
+    if (t->value_free)
+        t->value_free(target->value);
+    rb_free(target->key);
+    rb_free(target);
+    t->size--;
+    return 0;
 }
 
 static void rb_foreach_helper(const rbtree_t *t, rbnode_t *checkNode, void (*callerFunction)(const char *key, void *value, void *callerFunctionContext), void (*callerFunctionContext)) {

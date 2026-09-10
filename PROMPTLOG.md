@@ -297,3 +297,105 @@
 
     Claude output:
         Running make asan then make memcheck back-to-back (as the battery instructions specify) triggers a pre-existing, self-documented Makefile bug — CFLAGS changes aren't tracked as a dependency, so memcheck silently reused the ASan-instrumented binary from the prior step instead of rebuilding plain, and Valgrind can't run ASan binaries (they both hook malloc/free). A make clean between steps sidesteps it, which is what I did to get the real result above [make test, make asan, *make clean*, make memcheck]. This is a build-system gap, not a code defect.
+
+9/10/2026:
+    gug it's been a while
+    Asked for rb_delete without red-black fixup to get a baseline for the tree. Edited the draft for wording and pushed into src/rbtree.c. Then drafted BST deletion tests and implemented them into tests/test_rbtree.c. All tests pass and asan/memcheck have no issues.
+
+    make test output:
+        ok - validate_red_red_LL
+        ok - validate_red_red_LR
+        ok - validate_red_red_RL
+        ok - validate_red_red_RR
+        ok - validate_bst_order_immediate_left_too_big
+        ok - validate_bst_order_immediate_right_too_small
+        ok - validate_bst_order_deep_left_exceeds_root
+        ok - validate_bst_order_deep_right_below_root
+        ok - validate_black_height_left_heavy
+        ok - validate_black_height_right_heavy
+        ok - validate_root_must_be_black
+        ok - create_null_value_free
+        ok - create_nonnull_value_free
+        ok - create_fail_first_alloc
+        ok - create_fail_second_alloc
+        ok - create_independent_instances
+        ok - create_destroy_null_safe
+        ok - insert_into_empty_success
+        ok - insert_fails_first_alloc
+        ok - insert_fails_second_alloc
+        ok - insert_failure_value_not_consumed
+        ok - insert_overwrite_frees_old_value
+        ok - insert_distinct_keys_prove_key_copy
+        ok - insert_rebalances_ascending_run
+        ok - insert_rebalances_descending_run
+        ok - insert_rebalances_ll_line
+        ok - insert_rebalances_rr_line
+        ok - insert_rebalances_lr_zigzag
+        ok - insert_rebalances_rl_zigzag
+        ok - insert_rebalances_mixed_order
+        ok - insert_duplicate_key_null_value_free
+        ok - insert_key_survives_caller_free
+        ok - insert_fixup_recolor_reaches_root
+        ok - insert_destroy_frees_real_nodes
+        ok - delete_absent_key_empty_tree
+        ok - delete_absent_key_nonempty_tree
+        ok - delete_only_node_empties_tree
+        ok - delete_leaf_no_children
+        ok - delete_node_with_only_left_child
+        ok - delete_node_with_only_right_child
+        ok - delete_two_children_successor_is_right_child
+        ok - delete_two_children_successor_is_deep
+        ok - delete_end_to_end_mixed_shapes
+    
+    asan output:
+        ok - validate_red_red_LL
+        ok - validate_red_red_LR
+        ok - validate_red_red_RL
+        ok - validate_red_red_RR
+        ok - validate_bst_order_immediate_left_too_big
+        ok - validate_bst_order_immediate_right_too_small
+        ok - validate_bst_order_deep_left_exceeds_root
+        ok - validate_bst_order_deep_right_below_root
+        ok - validate_black_height_left_heavy
+        ok - validate_black_height_right_heavy
+        ok - validate_root_must_be_black
+        ok - create_null_value_free
+        ok - create_nonnull_value_free
+        ok - create_fail_first_alloc
+        ok - create_fail_second_alloc
+        ok - create_independent_instances
+        ok - create_destroy_null_safe
+        ok - insert_into_empty_success
+        ok - insert_fails_first_alloc
+        ok - insert_fails_second_alloc
+        ok - insert_failure_value_not_consumed
+        ok - insert_overwrite_frees_old_value
+        ok - insert_distinct_keys_prove_key_copy
+        ok - insert_rebalances_ascending_run
+        ok - insert_rebalances_descending_run
+        ok - insert_rebalances_ll_line
+        ok - insert_rebalances_rr_line
+        ok - insert_rebalances_lr_zigzag
+        ok - insert_rebalances_rl_zigzag
+        ok - insert_rebalances_mixed_order
+        ok - insert_duplicate_key_null_value_free
+        ok - insert_key_survives_caller_free
+        ok - insert_fixup_recolor_reaches_root
+        ok - insert_destroy_frees_real_nodes
+        ok - delete_absent_key_empty_tree
+        ok - delete_absent_key_nonempty_tree
+        ok - delete_only_node_empties_tree
+        ok - delete_leaf_no_children
+        ok - delete_node_with_only_left_child
+        ok - delete_node_with_only_right_child
+        ok - delete_two_children_successor_is_right_child
+        ok - delete_two_children_successor_is_deep
+        ok - delete_end_to_end_mixed_shapes
+    
+    memcheck output (slightly abridged):
+        ==2139287== HEAP SUMMARY:
+        ==2139287==     in use at exit: 0 bytes in 0 blocks
+        ==2139287==   total heap usage: 0 allocs, 0 frees, 0 bytes allocated
+        ==2139287== 
+        ==2139287== All heap blocks were freed -- no leaks are possible
+        ==2139287== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)

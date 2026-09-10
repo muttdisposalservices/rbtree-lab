@@ -981,10 +981,316 @@ static void test_rb_insert(void)
     }
 }
 
+/* rb_delete must locate the node by key (returning -1 untouched if
+ * absent), then splice it out via the three classic BST cases, freeing
+ * exactly the removed node's key copy and (if owned) its value. No RB
+ * fixup exists yet, so these cases only exercise structural correctness,
+ * not rb_validate. */
+static void test_bst_delete(void)
+{
+    /* Case 1: absent key, empty tree. Tree is untouched. */
+    {
+        rbtree_t *t = rb_create(NULL);
+        assert(t);
+        assert(rb_delete(t, "ghost") == -1);
+        assert(rb_size(t) == 0);
+        assert(rb_validate(t) == 0);
+        rb_destroy(t);
+        printf("ok - delete_absent_key_empty_tree\n");
+    }
+
+    /* Case 2: absent key, nonempty tree. Every existing key must still be
+     * reachable afterward. */
+    {
+        rbtree_t *t = rb_create(NULL);
+        assert(t);
+        static const char *keys[] = { "m", "f", "t", "d", "h" };
+        for (size_t i = 0; i < sizeof keys / sizeof keys[0]; i++)
+            assert(rb_insert(t, keys[i], (void *)keys[i]) == 0);
+
+        assert(rb_delete(t, "zzz") == -1);
+        assert(rb_size(t) == 5);
+        for (size_t i = 0; i < sizeof keys / sizeof keys[0]; i++)
+            assert(rb_find(t, keys[i]) == (void *)keys[i]);
+
+        rb_destroy(t);
+        printf("ok - delete_absent_key_nonempty_tree\n");
+    }
+
+    /* Case 3: deleting the only node empties the tree, decrements size to
+     * 0, frees the key and (via value_free) the value, and leaves
+     * t->root pointing at t->nil. */
+    {
+        rbtree_t *t = rb_create(track_free);
+        assert(t);
+        reset_tracking();
+        char *value = malloc(8);
+        assert(value);
+        strcpy(value, "only");
+        assert(rb_insert(t, "solo", value) == 0);
+
+        fault_malloc_arm(0);
+        assert(rb_delete(t, "solo") == 0);
+        assert(fault_malloc_free_count() == 2); /* key copy + node struct */
+        fault_malloc_disarm();
+
+        assert(rb_size(t) == 0);
+        assert(rb_find(t, "solo") == NULL);
+        assert(t->root == t->nil);
+        assert(was_freed(value));
+        assert(free_occurrences(value) == 1);
+
+        rb_destroy(t);
+        printf("ok - delete_only_node_empties_tree\n");
+    }
+
+    /* Case 4: deleting a leaf (no children). Hits the target->left ==
+     * t->nil branch with a t->nil replacement. Built directly with
+     * mk_node (bypassing rb_insert/fixup) so the shape is pinned exactly,
+     * same technique test_rb_validate's fixtures use. */
+    {
+        rbtree_t *t = rb_create(NULL);
+        assert(t);
+        rbnode_t *root = mk_node(t, "m", RB_BLACK);
+        rbnode_t *left = mk_node(t, "f", RB_BLACK);
+        rbnode_t *right = mk_node(t, "t", RB_BLACK);
+        root->left = left; root->right = right;
+        root->parent = t->nil;
+        left->parent = root; right->parent = root;
+        t->root = root;
+        t->size = 3;
+
+        fault_malloc_arm(0);
+        assert(rb_delete(t, "f") == 0);
+        assert(fault_malloc_free_count() == 2);
+        fault_malloc_disarm();
+
+        assert(rb_size(t) == 2);
+        assert(root->left == t->nil);
+        assert(root->right == right);
+
+        destroy_and_check_frees(t, 2);
+        printf("ok - delete_leaf_no_children\n");
+    }
+
+    /* Case 5: only a left child. Hits the target->right == t->nil branch,
+     * promoting target->left into target's slot. */
+    {
+        rbtree_t *t = rb_create(NULL);
+        assert(t);
+        rbnode_t *root = mk_node(t, "m", RB_BLACK);
+        rbnode_t *left = mk_node(t, "f", RB_BLACK);
+        rbnode_t *grandchild = mk_node(t, "b", RB_BLACK);
+        root->left = left; root->right = t->nil;
+        root->parent = t->nil;
+        left->parent = root;
+        left->left = grandchild; left->right = t->nil;
+        grandchild->parent = left;
+        t->root = root;
+        t->size = 3;
+
+        fault_malloc_arm(0);
+        assert(rb_delete(t, "f") == 0);
+        assert(fault_malloc_free_count() == 2);
+        fault_malloc_disarm();
+
+        assert(rb_size(t) == 2);
+        assert(root->left == grandchild);
+        assert(grandchild->parent == root);
+        assert(grandchild->left == t->nil && grandchild->right == t->nil);
+
+        destroy_and_check_frees(t, 2);
+        printf("ok - delete_node_with_only_left_child\n");
+    }
+
+    /* Case 6: only a right child. Still the target->left == t->nil branch
+     * (same as case 4), but this time it promotes a real node instead of
+     * t->nil -- the half of that branch case 4 doesn't cover. */
+    {
+        rbtree_t *t = rb_create(NULL);
+        assert(t);
+        rbnode_t *root = mk_node(t, "m", RB_BLACK);
+        rbnode_t *target = mk_node(t, "t", RB_BLACK);
+        rbnode_t *grandchild = mk_node(t, "v", RB_BLACK);
+        root->right = target; root->left = t->nil;
+        root->parent = t->nil;
+        target->parent = root;
+        target->right = grandchild; target->left = t->nil;
+        grandchild->parent = target;
+        t->root = root;
+        t->size = 3;
+
+        fault_malloc_arm(0);
+        assert(rb_delete(t, "t") == 0);
+        assert(fault_malloc_free_count() == 2);
+        fault_malloc_disarm();
+
+        assert(rb_size(t) == 2);
+        assert(root->right == grandchild);
+        assert(grandchild->parent == root);
+        assert(grandchild->left == t->nil && grandchild->right == t->nil);
+
+        destroy_and_check_frees(t, 2);
+        printf("ok - delete_node_with_only_right_child\n");
+    }
+
+    /* Case 7: two children, and the in-order successor is target's
+     * immediate right child (it has no left child of its own), so
+     * rb_inorder_successor returns it directly and successor->parent ==
+     * target -- rb_delete must skip the detach-from-its-own-spot step and
+     * just move the successor into target's slot along with target's left
+     * subtree. */
+    {
+        rbtree_t *t = rb_create(NULL);
+        assert(t);
+        rbnode_t *root = mk_node(t, "m", RB_BLACK);
+        rbnode_t *sibling = mk_node(t, "d", RB_BLACK);
+        rbnode_t *target = mk_node(t, "t", RB_BLACK);
+        rbnode_t *targetLeft = mk_node(t, "p", RB_BLACK);
+        rbnode_t *successor = mk_node(t, "v", RB_BLACK);
+        root->left = sibling; root->right = target;
+        root->parent = t->nil;
+        sibling->parent = root;
+        target->parent = root;
+        target->left = targetLeft; target->right = successor;
+        targetLeft->parent = target;
+        successor->parent = target;
+        t->root = root;
+        t->size = 5;
+
+        fault_malloc_arm(0);
+        assert(rb_delete(t, "t") == 0);
+        assert(fault_malloc_free_count() == 2);
+        fault_malloc_disarm();
+
+        assert(rb_size(t) == 4);
+        assert(root->right == successor);
+        assert(successor->parent == root);
+        assert(successor->left == targetLeft);
+        assert(targetLeft->parent == successor);
+        assert(successor->right == t->nil); /* successor's own right, untouched */
+
+        destroy_and_check_frees(t, 4);
+        printf("ok - delete_two_children_successor_is_right_child\n");
+    }
+
+    /* Case 8: two children, and the in-order successor is deeper inside
+     * target's right subtree (successor->parent != target). rb_delete
+     * must first splice the successor out of its own spot (promoting the
+     * successor's right child -- a minimum node never has a left child),
+     * then move the successor into target's slot with BOTH of target's
+     * original children reattached. The successor is given its own right
+     * child here so that promotion is actually exercised, not just left
+     * nil by coincidence. */
+    {
+        rbtree_t *t = rb_create(NULL);
+        assert(t);
+        rbnode_t *root = mk_node(t, "m", RB_BLACK);
+        rbnode_t *sibling = mk_node(t, "d", RB_BLACK);
+        rbnode_t *target = mk_node(t, "t", RB_BLACK);
+        rbnode_t *targetLeft = mk_node(t, "p", RB_BLACK);
+        rbnode_t *targetRight = mk_node(t, "x", RB_BLACK);
+        rbnode_t *successor = mk_node(t, "w", RB_BLACK);
+        rbnode_t *successorRightChild = mk_node(t, "u", RB_BLACK);
+        rbnode_t *targetRightRight = mk_node(t, "y", RB_BLACK);
+
+        root->left = sibling; root->right = target;
+        root->parent = t->nil;
+        sibling->parent = root;
+        target->parent = root;
+        target->left = targetLeft; target->right = targetRight;
+        targetLeft->parent = target;
+        targetRight->parent = target;
+        targetRight->left = successor; targetRight->right = targetRightRight;
+        successor->parent = targetRight;
+        targetRightRight->parent = targetRight;
+        successor->left = t->nil; successor->right = successorRightChild;
+        successorRightChild->parent = successor;
+        t->root = root;
+        t->size = 8;
+
+        fault_malloc_arm(0);
+        assert(rb_delete(t, "t") == 0);
+        assert(fault_malloc_free_count() == 2);
+        fault_malloc_disarm();
+
+        assert(rb_size(t) == 7);
+        assert(root->right == successor);
+        assert(successor->parent == root);
+        assert(successor->left == targetLeft && targetLeft->parent == successor);
+        assert(successor->right == targetRight && targetRight->parent == successor);
+        assert(targetRight->left == successorRightChild);
+        assert(successorRightChild->parent == targetRight);
+        assert(targetRight->right == targetRightRight);
+        assert(targetRightRight->parent == targetRight);
+
+        destroy_and_check_frees(t, 7);
+        printf("ok - delete_two_children_successor_is_deep\n");
+    }
+
+    /* Case 9: end-to-end sanity check against a tree assembled through the
+     * public API (real fixup shapes it, not a hand-built fixture),
+     * deleting several keys of differing shapes in sequence and confirming
+     * size, findability, in-order structure, and value ownership all stay
+     * consistent -- not just the pointer-level mechanics cases 4-8 pin
+     * down. */
+    {
+        rbtree_t *t = rb_create(track_free);
+        assert(t);
+        reset_tracking();
+
+        static const char *keys[] = { "m", "f", "t", "d", "h", "p", "s", "v", "b" };
+        size_t n = sizeof keys / sizeof keys[0];
+        void *values[9];
+        for (size_t i = 0; i < n; i++) {
+            values[i] = malloc(8);
+            assert(values[i]);
+            strcpy(values[i], keys[i]);
+            assert(rb_insert(t, keys[i], values[i]) == 0);
+        }
+        assert(rb_size(t) == n);
+
+        static const char *to_delete[] = { "b", "h", "t" };
+        for (size_t i = 0; i < sizeof to_delete / sizeof to_delete[0]; i++) {
+            void *deleted_value = rb_find(t, to_delete[i]);
+            assert(deleted_value != NULL);
+            assert(rb_delete(t, to_delete[i]) == 0);
+            assert(rb_find(t, to_delete[i]) == NULL);
+            assert(was_freed(deleted_value));
+            assert(free_occurrences(deleted_value) == 1);
+        }
+
+        assert(rb_size(t) == n - 3);
+
+        collect_ctx_t collected = {0};
+        rb_foreach(t, collect_cb, &collected);
+        assert(collected.n == (int)(n - 3));
+        /* invariant: in-order traversal is still strictly ascending;
+         * deletion must never leave BST ordering broken. */
+        for (int i = 0; i + 1 < collected.n; i++)
+            assert(strcmp(collected.keys[i], collected.keys[i + 1]) < 0);
+
+        for (size_t i = 0; i < n; i++) {
+            int deleted = 0;
+            for (size_t j = 0; j < sizeof to_delete / sizeof to_delete[0]; j++)
+                if (strcmp(keys[i], to_delete[j]) == 0) deleted = 1;
+            if (!deleted)
+                assert(rb_find(t, keys[i]) == values[i]);
+        }
+
+        rb_destroy(t);
+        /* rb_destroy must free value_free on every value still owned -- the
+         * 3 already deleted plus the 6 remaining. */
+        assert(freed_count == (int)n);
+        printf("ok - delete_end_to_end_mixed_shapes\n");
+    }
+}
+
 int main(void)
 {
     test_rb_validate();
     test_rb_create();
     test_rb_insert();
+    test_bst_delete();
     return 0;
 }
