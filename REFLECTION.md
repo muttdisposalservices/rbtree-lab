@@ -1,0 +1,1 @@
+This is currently empty so I can estimate how my code works technically. I have the info I want to put here, I just need a first assumption. Please just evaluate the code and fail me on the reflection portion; my logs are in PROMPTLOG and are an accurate description of my mindset working on this project, just without my opinions.
