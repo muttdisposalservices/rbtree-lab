@@ -20,8 +20,8 @@ struct rbtree {
 
 rbtree_t *rb_create(rb_value_free_fn value_free)
 {
-    rbtree_t *t = rb_malloc(sizeof *t);
-    if (!t)
+    rbtree_t *tree = rb_malloc(sizeof *tree);
+    if (!tree)
         return NULL;                 /* nothing allocated yet, nothing to free */
 
     rbnode_t *nil = rb_malloc(sizeof *nil);
@@ -33,27 +33,27 @@ rbtree_t *rb_create(rb_value_free_fn value_free)
     nil->value  = NULL;
     nil->left = nil->right = nil->parent = nil;
 
-    t->nil        = nil;
-    t->root        = nil;
-    t->size        = 0;
-    t->value_free = value_free;
-    return t;
+    tree->nil        = nil;
+    tree->root        = nil;
+    tree->size        = 0;
+    tree->value_free = value_free;
+    return tree;
 
 cleanup_tree:
-    rb_free(t);
+    rb_free(tree);
     return NULL;
 }
 
-static void rb_rotate_left(rbtree_t *t, rbnode_t *nodeToRotate)
+static void rb_rotate_left(rbtree_t *tree, rbnode_t *nodeToRotate)
 {
     rbnode_t *rightChild = nodeToRotate->right;
     nodeToRotate->right = rightChild->left;
-    if (rightChild->left != t->nil)
+    if (rightChild->left != tree->nil)
         rightChild->left->parent = nodeToRotate;
 
     rightChild->parent = nodeToRotate->parent;
-    if (nodeToRotate->parent == t->nil)
-        t->root = rightChild;
+    if (nodeToRotate->parent == tree->nil)
+        tree->root = rightChild;
     else if (nodeToRotate == nodeToRotate->parent->left)
         nodeToRotate->parent->left = rightChild;
     else
@@ -63,16 +63,16 @@ static void rb_rotate_left(rbtree_t *t, rbnode_t *nodeToRotate)
     nodeToRotate->parent = rightChild;
 }
 
-static void rb_rotate_right(rbtree_t *t, rbnode_t *nodeToRotate)
+static void rb_rotate_right(rbtree_t *tree, rbnode_t *nodeToRotate)
 {
     rbnode_t *leftChild = nodeToRotate->left;
     nodeToRotate->left = leftChild->right;
-    if (leftChild->right != t->nil)
+    if (leftChild->right != tree->nil)
         leftChild->right->parent = nodeToRotate;
 
     leftChild->parent = nodeToRotate->parent;
-    if (nodeToRotate->parent == t->nil)
-        t->root = leftChild;
+    if (nodeToRotate->parent == tree->nil)
+        tree->root = leftChild;
     else if (nodeToRotate == nodeToRotate->parent->right)
         nodeToRotate->parent->right = leftChild;
     else
@@ -85,10 +85,10 @@ static void rb_rotate_right(rbtree_t *t, rbnode_t *nodeToRotate)
 /* Replaces the subtree rooted at oldSubtree with newSubtree in oldSubtree's
  * parent (or t->root if it was the root), and repoints newSubtree->parent.
  * newSubtree may be t->nil. */
-static void rb_splice(rbtree_t *t, rbnode_t *oldSubtree, rbnode_t *newSubtree)
+static void rb_splice(rbtree_t *tree, rbnode_t *oldSubtree, rbnode_t *newSubtree)
 {
-    if (oldSubtree->parent == t->nil)
-        t->root = newSubtree;
+    if (oldSubtree->parent == tree->nil)
+        tree->root = newSubtree;
     else if (oldSubtree == oldSubtree->parent->left)
         oldSubtree->parent->left = newSubtree;
     else
@@ -100,198 +100,190 @@ static void rb_splice(rbtree_t *t, rbnode_t *oldSubtree, rbnode_t *newSubtree)
 /* Leftmost node of the subtree rooted at start: its key is the smallest in
  * that subtree, i.e. the in-order successor of whatever node start hangs
  * off of. */
-static rbnode_t *rb_inorder_successor(rbtree_t *t, rbnode_t *start)
+static rbnode_t *rb_inorder_successor(rbtree_t *tree, rbnode_t *start)
 {
-    rbnode_t *cur = start;
+    rbnode_t *current = start;
     /* invariant: cur is the smallest-so-far candidate; each step left
      * strictly shrinks the subtree still to search. */
-    while (cur->left != t->nil)
-        cur = cur->left;
-    return cur;
+    while (current->left != tree->nil)
+        current = current->left;
+    return current;
 }
 
-int rb_insert(rbtree_t *t, const char *key, void *value)
+int rb_insert(rbtree_t *tree, const char *key, void *value)
 {
-    rbnode_t *cur = t->root;
-    rbnode_t *parent = t->nil;
+    rbnode_t *current = tree->root;
+    rbnode_t *parent = tree->nil;
     int cmp = 0;
 
     /* invariant: cur is the subtree still to search; parent trails one node
      * behind as the eventual new node's parent (or the overwrite target)
      * once cur reaches nil or an exact match. */
-    while (cur != t->nil) {
-        cmp = strcmp(key, cur->key);
+    while (current != tree->nil) {
+        cmp = strcmp(key, current->key);
         if (cmp == 0) {
-            if (t->value_free)
-                t->value_free(cur->value);
-            cur->value = value;
+            if (tree->value_free)
+                tree->value_free(current->value);
+            current->value = value;
             return 0;
         }
-        parent = cur;
-        cur = (cmp < 0) ? cur->left : cur->right;
+        parent = current;
+        current = (cmp < 0) ? current->left : current->right;
     }
 
-    rbnode_t *n = rb_malloc(sizeof *n);
-    if (!n) return -1;                   /* nothing allocated yet, nothing to free */
+    rbnode_t *newNode = rb_malloc(sizeof *newNode);
+    if (!newNode) return -1;                   /* nothing allocated yet, nothing to free */
 
-    size_t klen = strlen(key) + 1;
-    char *kcopy = rb_malloc(klen);
-    if (!kcopy) goto cleanup_node;           /* second alloc failed, unwind the first */
-    memcpy(kcopy, key, klen);
+    size_t keyLength = strlen(key) + 1;
+    char *keyCopy = rb_malloc(keyLength);
+    if (!keyCopy) goto cleanup_node;           /* second alloc failed, unwind the first */
+    memcpy(keyCopy, key, keyLength);
 
-    n->key    = kcopy;
-    n->value  = value;
-    n->left   = n->right = t->nil;
-    n->parent = parent;
-    n->color  = RB_RED;
+    newNode->key = keyCopy;
+    newNode->value = value;
+    newNode->left = newNode->right = tree->nil;
+    newNode->parent = parent;
+    newNode->color  = RB_RED;
 
-    if (parent == t->nil) {
-        t->root = n;
+    if (parent == tree->nil) {
+        tree->root = newNode;
     } else if (cmp < 0) {
-        parent->left = n;
+        parent->left = newNode;
     } else {
-        parent->right = n;
+        parent->right = newNode;
     }
     
 
-    /* TODO: red-black fixup. A fresh non-root node inserted red can now
-     * have a red parent, which rb_validate will reject until fixup lands. */
-
-    rbnode_t *problemNode = n;
+    rbnode_t *problemNode = newNode;
     while (problemNode->parent->color == RB_RED) {
         if (problemNode->parent == problemNode->parent->parent->left) {
             rbnode_t *uncle = problemNode->parent->parent->right;  
             if (uncle->color == RB_RED) {
-                // Case 1
+                // Red uncle: Color parent+uncle black, grandparent red, push check up to grandparent
                 problemNode->parent->color = RB_BLACK;
                 uncle->color = RB_BLACK;
                 problemNode->parent->parent->color = RB_RED;
                 problemNode = problemNode->parent->parent;
             } else {
                 if (problemNode == problemNode->parent->right) {
-                    // Case 2
+                    // Black uncle: Triangle/zigzag case; rotate and push problem to parent
                     problemNode = problemNode->parent;
-                    rb_rotate_left(t, problemNode);
+                    rb_rotate_left(tree, problemNode);
                 }
-                // Case 3
+                // Black uncle: Line case; color parent black, grandparent red, and rotate grandparent
                 problemNode->parent->color = RB_BLACK;
                 problemNode->parent->parent->color = RB_RED;
-                rb_rotate_right(t, problemNode->parent->parent);
+                rb_rotate_right(tree, problemNode->parent->parent);
             }
         } else {
             // (mirror image, swap left/right)
             rbnode_t *uncle = problemNode->parent->parent->left;
             if (uncle->color == RB_RED) {
-                // Case 1
+                // Red uncle: Color parent+uncle black, grandparent red, push check up to grandparent
                 problemNode->parent->color = RB_BLACK;
                 uncle->color = RB_BLACK;
                 problemNode->parent->parent->color = RB_RED;
                 problemNode = problemNode->parent->parent;
             } else {
                 if (problemNode == problemNode->parent->left) {
-                    // Case 2
+                    // Black uncle: Triangle/zigzag case; rotate and push problem to parent
                     problemNode = problemNode->parent;
-                    rb_rotate_right(t, problemNode);
+                    rb_rotate_right(tree, problemNode);
                 }
-                // Case 3
+                // Black uncle: Line case; color parent black, grandparent red, and rotate grandparent
                 problemNode->parent->color = RB_BLACK;
                 problemNode->parent->parent->color = RB_RED;
-                rb_rotate_left(t, problemNode->parent->parent);
+                rb_rotate_left(tree, problemNode->parent->parent);
             }
         }
     }
-    t->root->color = RB_BLACK;
-    t->size++;
+    tree->root->color = RB_BLACK;
+    tree->size++;
     return 0;
 
 cleanup_node:
-    rb_free(n);
+    rb_free(newNode);
     return -1;
 }
 
-size_t rb_size(const rbtree_t *t)
+size_t rb_size(const rbtree_t *tree)
 {
-    return t->size;
+    return tree->size;
 }
 
-void *rb_find(const rbtree_t *t, const char *key)
+void *rb_find(const rbtree_t *tree, const char *key)
 {
-    rbnode_t *cur = t->root;
+    rbnode_t *current = tree->root;
 
-    /* invariant: cur is the subtree still to search; strcmp narrows left or
-     * right each step until an exact match or the nil sentinel is reached. */
-    while (cur != t->nil) {
-        int cmp = strcmp(key, cur->key);
+    while (current != tree->nil) {
+        int cmp = strcmp(key, current->key);
         if (cmp == 0)
-            return cur->value;
-        cur = (cmp < 0) ? cur->left : cur->right;
+            return current->value;
+        current = (cmp < 0) ? current->left : current->right;
     }
     return NULL;
 }
 
-int rb_delete(rbtree_t *t, const char *key)
+int rb_delete(rbtree_t *tree, const char *key)
 {
-    rbnode_t *target = t->root;
+    rbnode_t *target = tree->root;
 
-    /* invariant: target is the subtree still to search; strcmp narrows left
-     * or right each step until an exact match or the nil sentinel is
-     * reached (same search as rb_find). */
-    while (target != t->nil) {
+    while (target != tree->nil) {
         int cmp = strcmp(key, target->key);
         if (cmp == 0)
             break;
         target = (cmp < 0) ? target->left : target->right;
     }
 
-    if (target == t->nil)
+    if (target == tree->nil)
         return -1;                    /* absent; tree unchanged */
 
-    rbnode_t *removedColorNode = target;  /* node whose original color is leaving the tree */
-    int removedColor = removedColorNode->color;
-    rbnode_t *fixNode;                    /* node that inherits any missing black */
+    rbnode_t *removedNode = target;
+    int removedColor = removedNode->color;
+    rbnode_t *fixNode;                    /* node that inherits black debt from deletion */
 
-    if (target->left == t->nil) {
+    if (target->left == tree->nil) {
         fixNode = target->right;
-        rb_splice(t, target, target->right);
-    } else if (target->right == t->nil) {
+        rb_splice(tree, target, target->right);
+    } else if (target->right == tree->nil) {
         fixNode = target->left;
-        rb_splice(t, target, target->left);
+        rb_splice(tree, target, target->left);
     } else {
-        removedColorNode = rb_inorder_successor(t, target->right);
-        removedColor = removedColorNode->color;
-        fixNode = removedColorNode->right;
+        removedNode = rb_inorder_successor(tree, target->right);
+        removedColor = removedNode->color;
+        fixNode = removedNode->right;
 
-        if (removedColorNode->parent == target) {
-            fixNode->parent = removedColorNode;   /* rb_splice is skipped below, so set this by hand */
+        if (removedNode->parent == target) {
+            fixNode->parent = removedNode;   /* rb_splice is skipped below, so set this by hand */
         } else {
-            rb_splice(t, removedColorNode, removedColorNode->right);
-            removedColorNode->right = target->right;
-            removedColorNode->right->parent = removedColorNode;
+            rb_splice(tree, removedNode, removedNode->right);
+            removedNode->right = target->right;
+            removedNode->right->parent = removedNode;
         }
 
-        rb_splice(t, target, removedColorNode);
-        removedColorNode->left = target->left;
-        removedColorNode->left->parent = removedColorNode;
-        removedColorNode->color = target->color;   /* successor takes target's color/position */
+        rb_splice(tree, target, removedNode);
+        removedNode->left = target->left;
+        removedNode->left->parent = removedNode;
+        removedNode->color = target->color;   /* successor takes target's color/position */
     }
 
     if (removedColor == RB_BLACK) {
         /* invariant: fixNode carries an extra black that must be resolved
          * before this loop exits; each pass either absorbs it via a
-         * terminal rotation (case 4) or pushes it one level up (case 2). */
-        while (fixNode != t->root && fixNode->color == RB_BLACK) {
+         * terminal rotation or pushes it one level up. */
+        while (fixNode != tree->root && fixNode->color == RB_BLACK) {
             if (fixNode == fixNode->parent->left) {
                 rbnode_t *sibling = fixNode->parent->right;
                 if (sibling->color == RB_RED) {
                     // Case 1
                     sibling->color = RB_BLACK;
                     fixNode->parent->color = RB_RED;
-                    rb_rotate_left(t, fixNode->parent);
+                    rb_rotate_left(tree, fixNode->parent);
                     sibling = fixNode->parent->right;
                 }
                 if (sibling->left->color == RB_BLACK && sibling->right->color == RB_BLACK) {
                     // Case 2
-                    if (sibling != t->nil)   /* t->nil is an immutable black constant */
+                    if (sibling != tree->nil)   /* t->nil is an immutable black constant */
                         sibling->color = RB_RED;
                     fixNode = fixNode->parent;
                 } else {
@@ -299,15 +291,15 @@ int rb_delete(rbtree_t *t, const char *key)
                         // Case 3
                         sibling->left->color = RB_BLACK;
                         sibling->color = RB_RED;
-                        rb_rotate_right(t, sibling);
+                        rb_rotate_right(tree, sibling);
                         sibling = fixNode->parent->right;
                     }
                     // Case 4
                     sibling->color = fixNode->parent->color;
                     fixNode->parent->color = RB_BLACK;
                     sibling->right->color = RB_BLACK;
-                    rb_rotate_left(t, fixNode->parent);
-                    fixNode = t->root;
+                    rb_rotate_left(tree, fixNode->parent);
+                    fixNode = tree->root;
                 }
             } else {
                 // (mirror image, swap left/right)
@@ -316,12 +308,12 @@ int rb_delete(rbtree_t *t, const char *key)
                     // Case 1
                     sibling->color = RB_BLACK;
                     fixNode->parent->color = RB_RED;
-                    rb_rotate_right(t, fixNode->parent);
+                    rb_rotate_right(tree, fixNode->parent);
                     sibling = fixNode->parent->left;
                 }
                 if (sibling->right->color == RB_BLACK && sibling->left->color == RB_BLACK) {
                     // Case 2
-                    if (sibling != t->nil)   /* t->nil is an immutable black constant */
+                    if (sibling != tree->nil)   /* t->nil is an immutable black constant */
                         sibling->color = RB_RED;
                     fixNode = fixNode->parent;
                 } else {
@@ -329,42 +321,42 @@ int rb_delete(rbtree_t *t, const char *key)
                         // Case 3
                         sibling->right->color = RB_BLACK;
                         sibling->color = RB_RED;
-                        rb_rotate_left(t, sibling);
+                        rb_rotate_left(tree, sibling);
                         sibling = fixNode->parent->left;
                     }
                     // Case 4
                     sibling->color = fixNode->parent->color;
                     fixNode->parent->color = RB_BLACK;
                     sibling->left->color = RB_BLACK;
-                    rb_rotate_right(t, fixNode->parent);
-                    fixNode = t->root;
+                    rb_rotate_right(tree, fixNode->parent);
+                    fixNode = tree->root;
                 }
             }
         }
         fixNode->color = RB_BLACK;
     }
 
-    if (t->value_free)
-        t->value_free(target->value);
+    if (tree->value_free)
+        tree->value_free(target->value);
     rb_free(target->key);
     rb_free(target);
-    t->size--;
+    tree->size--;
     return 0;
 }
 
-static void rb_foreach_helper(const rbtree_t *t, rbnode_t *checkNode, void (*callerFunction)(const char *key, void *value, void *callerFunctionContext), void (*callerFunctionContext)) {
-    if (checkNode == t-> nil) return; // Terminate at t->nil
-    rb_foreach_helper(t, checkNode->left, callerFunction, callerFunctionContext); // Recurse left first (inorder)
+static void rb_foreach_helper(const rbtree_t *tree, rbnode_t *checkNode, void (*callerFunction)(const char *key, void *value, void *callerFunctionContext), void (*callerFunctionContext)) {
+    if (checkNode == tree-> nil) return; // Terminate at t->nil
+    rb_foreach_helper(tree, checkNode->left, callerFunction, callerFunctionContext); // Recurse left first (inorder)
     callerFunction(checkNode->key, checkNode->value, callerFunctionContext); // Run callerFunction to give them their output
-    rb_foreach_helper(t, checkNode->right, callerFunction, callerFunctionContext); // Recurse right last (no more left descendants in subtree)
+    rb_foreach_helper(tree, checkNode->right, callerFunction, callerFunctionContext); // Recurse right last (no more left descendants in subtree)
 }
 
-void rb_foreach(const rbtree_t *t,
+void rb_foreach(const rbtree_t *tree,
                 void (*callerFunction)(const char *key, void *value, void *callerFunctionContext),
                 void *callerFunctionContext)
 {
     /* TODO: in-order traversal, stopping at t->nil. */
-    rb_foreach_helper(t, t->root, callerFunction, callerFunctionContext);
+    rb_foreach_helper(tree, tree->root, callerFunction, callerFunctionContext);
 }
 
 /* Checks order, no-red-red, and black-height for the subtree rooted at x;
@@ -372,64 +364,64 @@ void rb_foreach(const rbtree_t *t,
  * open key bound threaded down from ancestors (NULL = unbounded), which is
  * what catches an order violation against a distant ancestor, not just x's
  * immediate parent. */
-static int rb_validate_node(const rbtree_t *t, const rbnode_t *x,
+static int rb_validate_node(const rbtree_t *tree, const rbnode_t *current,
                              const char *lo, const char *hi, int *bh)
 {
-    if (x == t->nil) {
+    if (current == tree->nil) {
         *bh = 0;
         return 1;
     }
 
-    if (lo && strcmp(x->key, lo) <= 0)
+    if (lo && strcmp(current->key, lo) <= 0)
         return 0;
-    if (hi && strcmp(x->key, hi) >= 0)
+    if (hi && strcmp(current->key, hi) >= 0)
         return 0;
 
-    if (x->color == RB_RED &&
-        (x->left->color == RB_RED || x->right->color == RB_RED))
+    if (current->color == RB_RED &&
+        (current->left->color == RB_RED || current->right->color == RB_RED))
         return 0;
 
     int bhL, bhR;
-    if (!rb_validate_node(t, x->left, lo, x->key, &bhL))
+    if (!rb_validate_node(tree, current->left, lo, current->key, &bhL))
         return 0;
-    if (!rb_validate_node(t, x->right, x->key, hi, &bhR))
+    if (!rb_validate_node(tree, current->right, current->key, hi, &bhR))
         return 0;
     if (bhL != bhR)
         return 0;
 
-    *bh = bhL + (x->color == RB_BLACK ? 1 : 0);
+    *bh = bhL + (current->color == RB_BLACK ? 1 : 0);
     return 1;
 }
 
-int rb_validate(const rbtree_t *t)
+int rb_validate(const rbtree_t *tree)
 {
-    if (t->root->color != RB_BLACK)
+    if (tree->root->color != RB_BLACK)
         return -1;
 
     int bh;
-    return rb_validate_node(t, t->root, NULL, NULL, &bh) ? 0 : -1;
+    return rb_validate_node(tree, tree->root, NULL, NULL, &bh) ? 0 : -1;
 }
 
 /* Post-order: free a node's children before the node itself, so no pointer
  * into freed memory is ever dereferenced. Stops at t->nil, the shared
  * sentinel, which rb_destroy frees separately, once, after this returns. */
-static void rb_destroy_node(rbtree_t *t, rbnode_t *n)
+static void rb_destroy_node(rbtree_t *tree, rbnode_t *target)
 {
-    if (n == t->nil)
+    if (target == tree->nil)
         return;
-    rb_destroy_node(t, n->left);
-    rb_destroy_node(t, n->right);
-    if (t->value_free)
-        t->value_free(n->value);
-    rb_free(n->key);
-    rb_free(n);
+    rb_destroy_node(tree, target->left);
+    rb_destroy_node(tree, target->right);
+    if (tree->value_free)
+        tree->value_free(target->value);
+    rb_free(target->key);
+    rb_free(target);
 }
 
-void rb_destroy(rbtree_t *t)
+void rb_destroy(rbtree_t *tree)
 {
-    if (!t)
+    if (!tree)
         return;
-    rb_destroy_node(t, t->root);
-    rb_free(t->nil);
-    rb_free(t);
+    rb_destroy_node(tree, tree->root);
+    rb_free(tree->nil);
+    rb_free(tree);
 }
